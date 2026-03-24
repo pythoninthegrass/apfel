@@ -1,5 +1,10 @@
 # apfel
 
+[![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white)](https://swift.org)
+[![macOS 26+](https://img.shields.io/badge/macOS-26%2B-000000?logo=apple&logoColor=white)](https://developer.apple.com/macos/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![FoundationModels](https://img.shields.io/badge/Apple-FoundationModels-8E8E93?logo=apple&logoColor=white)](https://developer.apple.com/documentation/foundationmodels)
+
 > *German for "apple."*
 
 **Apple Intelligence from the command line.**
