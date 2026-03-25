@@ -102,18 +102,18 @@ struct DebugPanel: View {
                     .padding(12)
                 }
             } else {
-                // Empty state
                 VStack(spacing: 8) {
                     Spacer()
                     Image(systemName: "ant.circle")
                         .font(.system(size: 32))
                         .foregroundStyle(.tertiary)
-                    Text("Click a message to inspect")
+                    Text("No message selected")
                         .font(.callout)
                         .foregroundStyle(.tertiary)
-                    Text("See the full HTTP request/response")
+                    Text("Click the \(Image(systemName: "ant.circle")) Inspect button\nnext to any message")
                         .font(.caption)
                         .foregroundStyle(.quaternary)
+                        .multilineTextAlignment(.center)
                     Spacer()
                 }
                 .frame(maxWidth: .infinity)
@@ -149,6 +149,7 @@ struct DebugPanel: View {
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
+                .onHover { h in if h { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
             }
             .font(.caption)
 

@@ -10,6 +10,9 @@ struct MessageBubble: View {
     let isSelected: Bool
     let onSelect: () -> Void
 
+    @State private var inspectHovered = false
+    @State private var copyHovered = false
+
     var body: some View {
         VStack(alignment: message.role == "user" ? .trailing : .leading, spacing: 4) {
             // Role + timing header
@@ -63,23 +66,51 @@ struct MessageBubble: View {
             }
             .padding(.horizontal, 16)
 
-            // Action buttons — ALWAYS visible, full size
-            HStack(spacing: 12) {
+            // Action buttons — ALWAYS visible, clearly clickable
+            HStack(spacing: 8) {
                 if message.role == "user" { Spacer() }
 
+                // Inspect button
                 Button(action: onSelect) {
-                    Label("Inspect", systemImage: "ant.circle")
-                        .font(.caption)
+                    HStack(spacing: 4) {
+                        Image(systemName: "ant.circle")
+                        Text("Inspect")
+                    }
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(
+                        inspectHovered
+                            ? (isSelected ? Color.accentColor.opacity(0.15) : Color(nsColor: .controlBackgroundColor))
+                            : Color.clear
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .foregroundColor(isSelected ? .accentColor : .secondary)
                 }
                 .buttonStyle(.borderless)
-                .foregroundColor(isSelected ? .accentColor : .secondary)
+                .onHover { hovering in
+                    inspectHovered = hovering
+                    if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                }
 
+                // Copy button
                 Button(action: copyToClipboard) {
-                    Label("Copy", systemImage: "doc.on.doc")
-                        .font(.caption)
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.on.doc")
+                        Text("Copy")
+                    }
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(copyHovered ? Color(nsColor: .controlBackgroundColor) : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .foregroundColor(.secondary)
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
+                .onHover { hovering in
+                    copyHovered = hovering
+                    if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                }
 
                 if message.role == "assistant" { Spacer() }
             }
