@@ -159,6 +159,18 @@ struct ChatView: View {
                 }
                 .buttonStyle(.borderless)
                 .disabled(!canSend)
+
+                Button(action: { viewModel.clear() }) {
+                    Image(systemName: "trash")
+                        .font(.body)
+                        .foregroundColor(.gray)
+                        .frame(width: 30, height: 30)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.borderless)
+                .help("Clear chat")
+                .disabled(viewModel.messages.isEmpty && viewModel.currentInput.isEmpty)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
