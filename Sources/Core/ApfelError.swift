@@ -1,6 +1,6 @@
 import Foundation
 
-public enum ApfelError: Equatable, Sendable {
+public enum ApfelError: Error, Equatable, Sendable {
     case guardrailViolation
     case contextOverflow
     case rateLimited
@@ -8,8 +8,31 @@ public enum ApfelError: Equatable, Sendable {
     case unsupportedLanguage(String)
     case unknown(String)
 
-    /// Classify any thrown error into a typed ApfelError by matching description keywords.
+    /// Classify any thrown error into a typed ApfelError.
+    /// Matches on FoundationModels.GenerationError first, falls back to string matching.
     public static func classify(_ error: Error) -> ApfelError {
+        // Try typed match first (FoundationModels errors)
+        let typeName = String(describing: type(of: error))
+        let mirror = String(reflecting: error)
+        if typeName.contains("GenerationError") || mirror.contains("GenerationError") {
+            if mirror.contains("guardrailViolation") || mirror.contains("refusal") {
+                return .guardrailViolation
+            }
+            if mirror.contains("exceededContextWindowSize") {
+                return .contextOverflow
+            }
+            if mirror.contains("rateLimited") {
+                return .rateLimited
+            }
+            if mirror.contains("concurrentRequests") {
+                return .concurrentRequest
+            }
+            if mirror.contains("unsupportedLanguageOrLocale") {
+                return .unsupportedLanguage(error.localizedDescription)
+            }
+        }
+
+        // Fallback: string matching for unknown error types
         let desc = error.localizedDescription.lowercased()
         if desc.contains("guardrail") || desc.contains("content policy") || desc.contains("unsafe") {
             return .guardrailViolation
@@ -48,6 +71,18 @@ public enum ApfelError: Equatable, Sendable {
         case .concurrentRequest:   return "rate_limit_error"
         case .unsupportedLanguage: return "invalid_request_error"
         case .unknown:             return "server_error"
+        }
+    }
+
+    /// HTTP status code for this error type.
+    public var httpStatusCode: Int {
+        switch self {
+        case .guardrailViolation:  return 400
+        case .contextOverflow:     return 400
+        case .rateLimited:         return 429
+        case .concurrentRequest:   return 429
+        case .unsupportedLanguage: return 400
+        case .unknown:             return 500
         }
     }
 

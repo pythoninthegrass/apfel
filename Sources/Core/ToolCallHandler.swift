@@ -25,18 +25,26 @@ public enum ToolCallHandler {
     // MARK: - System Prompt Building
 
     /// Build the tool-calling instruction block to inject into session instructions.
+    /// Uses JSONSerialization for proper escaping of tool names/descriptions.
     public static func buildSystemPrompt(tools: [ToolDef]) -> String {
-        let schemas = tools.map { tool -> String in
-            var lines = ["  {", "    \"name\": \"\(tool.name)\""]
-            if let desc = tool.description {
-                lines.append("    \"description\": \"\(desc)\"")
+        var schemaObjects: [[String: Any]] = []
+        for tool in tools {
+            var obj: [String: Any] = ["name": tool.name]
+            if let desc = tool.description { obj["description"] = desc }
+            if let params = tool.parametersJSON,
+               let data = params.data(using: .utf8),
+               let parsed = try? JSONSerialization.jsonObject(with: data) {
+                obj["parameters"] = parsed
             }
-            if let params = tool.parametersJSON {
-                lines.append("    \"parameters\": \(params)")
-            }
-            lines.append("  }")
-            return lines.joined(separator: ",\n")
-        }.joined(separator: ",\n")
+            schemaObjects.append(obj)
+        }
+        let schemasJSON: String
+        if let data = try? JSONSerialization.data(withJSONObject: schemaObjects, options: [.prettyPrinted, .sortedKeys]),
+           let str = String(data: data, encoding: .utf8) {
+            schemasJSON = str
+        } else {
+            schemasJSON = "[]"
+        }
 
         return """
         ## Available Functions
@@ -46,9 +54,7 @@ public enum ToolCallHandler {
         Replace <unique> with a short unique string, <name> with the function name, and <escaped_json_string> with the arguments as a JSON-encoded string.
 
         Available functions:
-        [
-        \(schemas)
-        ]
+        \(schemasJSON)
         """
     }
 
@@ -85,7 +91,8 @@ public enum ToolCallHandler {
         // 2. Strip markdown code blocks ```json ... ``` or ``` ... ```
         var remaining = text
         while let start = remaining.range(of: "```"),
-              let end = remaining.range(of: "```", range: remaining.index(start.upperBound, offsetBy: 1)..<remaining.endIndex) {
+              let nextIdx = remaining.index(start.upperBound, offsetBy: 1, limitedBy: remaining.endIndex),
+              let end = remaining.range(of: "```", range: nextIdx..<remaining.endIndex) {
             let block = String(remaining[start.upperBound..<end.lowerBound])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             // Strip optional "json" language tag

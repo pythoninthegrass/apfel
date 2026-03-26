@@ -1,33 +1,48 @@
 // ============================================================================
-// TokenCounter.swift — Token counting for context window management
+// TokenCounter.swift — Token counting via FoundationModels API
 //
-// CURRENT: uses chars/4 approximation (macOS 26.1 SDK)
-// UPGRADE: when macOS 26.4 SDK is installed, replace with:
-//   try await SystemLanguageModel.default.tokenCount(for: text)
-//   try await SystemLanguageModel.default.contextSize
-// See /open-tickets/TICKET-001-token-counting-api.md
+// Uses SystemLanguageModel.tokenCount(for:) (macOS 26.4+) with chars/4 fallback.
 // ============================================================================
 
 import Foundation
+import FoundationModels
 
 actor TokenCounter {
     static let shared = TokenCounter()
-    private static let contextWindowSize = 4096
+    private let model = SystemLanguageModel.default
 
-    /// Count tokens in text using chars/4 approximation.
-    /// Upgrade path: replace with Apple's tokenCount(for:) when macOS 26.4 SDK is available.
+    /// Count tokens in text using the real FoundationModels API.
+    /// Falls back to chars/4 approximation on error.
     func count(_ text: String) async -> Int {
         guard !text.isEmpty else { return 0 }
-        return max(1, text.count / 4)
+        if #available(macOS 26.4, *) {
+            do {
+                return try await model.tokenCount(for: text)
+            } catch {
+                return max(1, text.count / 4)
+            }
+        } else {
+            return max(1, text.count / 4)
+        }
     }
 
-    /// Total context window in tokens (4096, fixed for Apple's on-device model).
-    func contextSize() async -> Int {
-        return Self.contextWindowSize
+    /// Real context window size from the model.
+    var contextSize: Int {
+        model.contextSize
     }
 
     /// Tokens available for model input given a reserved output budget.
-    func inputBudget(reservedForOutput: Int = 512) async -> Int {
-        await contextSize() - reservedForOutput
+    func inputBudget(reservedForOutput: Int = 512) -> Int {
+        contextSize - reservedForOutput
+    }
+
+    /// Whether the model is available for generation.
+    var isAvailable: Bool {
+        model.isAvailable
+    }
+
+    /// Supported languages as locale identifier strings.
+    var supportedLanguages: [String] {
+        model.supportedLanguages.compactMap { $0.languageCode?.identifier }
     }
 }

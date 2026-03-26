@@ -33,7 +33,7 @@ let package = Package(
                 ])
             ]
         ),
-        // Test runner executable — no XCTest/Testing needed, pure Swift
+        // Test runner — pure Swift, no XCTest/Testing (Command Line Tools only)
         .executableTarget(
             name: "apfel-tests",
             dependencies: ["ApfelCore"],

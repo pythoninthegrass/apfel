@@ -29,24 +29,45 @@ enum ContextManager {
         messages: [OpenAIMessage],
         tools: [OpenAITool]?,
         options: SessionOptions
-    ) -> (session: LanguageModelSession, finalPrompt: String) {
+    ) async throws -> (session: LanguageModelSession, finalPrompt: String) {
         let conversation = messages.filter { $0.role != "system" }
-        let finalPrompt = conversation.last?.textContent ?? ""
+        guard let finalPrompt = conversation.last?.textContent, !finalPrompt.isEmpty else {
+            throw ApfelError.unknown("Last message has no text content")
+        }
         let history = Array(conversation.dropLast())
 
         let model = makeModel(permissive: options.permissive)
-        var entries: [Transcript.Entry] = []
 
         // Build instructions (system prompt + tool injection)
         let instrText = buildInstructions(messages: messages, tools: tools)
+
+        // Budget-aware history: count tokens and keep newest messages that fit
+        let tc = TokenCounter.shared
+        let budget = await tc.inputBudget(reservedForOutput: 512)
+        var usedTokens = await tc.count(finalPrompt)
+        if !instrText.isEmpty {
+            usedTokens += await tc.count(instrText)
+        }
+
+        // Walk history newest-first, keep messages that fit within budget
+        var keptHistory: [(role: String, msg: OpenAIMessage)] = []
+        for msg in history.reversed() {
+            let text = msg.textContent ?? msg.tool_call_id ?? ""
+            let tokens = await tc.count(text)
+            if usedTokens + tokens > budget { break }
+            usedTokens += tokens
+            keptHistory.insert((msg.role, msg), at: 0)
+        }
+
+        // Build transcript entries
+        var entries: [Transcript.Entry] = []
         if !instrText.isEmpty {
             let seg = Transcript.TextSegment(content: instrText)
             let instr = Transcript.Instructions(segments: [.text(seg)], toolDefinitions: [])
             entries.append(.instructions(instr))
         }
 
-        // Build history entries
-        for msg in history {
+        for (_, msg) in keptHistory {
             switch msg.role {
             case "user":
                 if let text = msg.textContent {

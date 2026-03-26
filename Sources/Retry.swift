@@ -72,9 +72,10 @@ func withRetry<T: Sendable>(
 // MARK: - Async Semaphore
 
 /// A simple async semaphore for limiting concurrent operations.
+/// Uses ID-based waiter tracking to prevent double-resume on timeout.
 actor AsyncSemaphore {
     private var count: Int
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var waiters: [(id: UUID, continuation: CheckedContinuation<Void, any Error>)] = []
 
     init(value: Int) {
         self.count = value
@@ -87,32 +88,30 @@ actor AsyncSemaphore {
             return
         }
 
-        // Queue and wait
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask {
-                await withCheckedContinuation { continuation in
-                    Task { await self.addWaiter(continuation) }
-                }
+        let id = UUID()
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, any Error>) in
+            waiters.append((id: id, continuation: cont))
+            Task { [weak self] in
+                try? await Task.sleep(for: timeout)
+                await self?.timeoutWaiter(id: id)
             }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                throw SemaphoreTimeoutError()
-            }
-            // First to complete wins
-            try await group.next()
-            group.cancelAll()
         }
     }
 
-    private func addWaiter(_ continuation: CheckedContinuation<Void, Never>) {
-        waiters.append(continuation)
+    /// Remove a waiter by ID and resume with timeout error.
+    /// If signal() already resumed it, the waiter won't be in the array — no-op.
+    private func timeoutWaiter(id: UUID) {
+        if let idx = waiters.firstIndex(where: { $0.id == id }) {
+            let waiter = waiters.remove(at: idx)
+            waiter.continuation.resume(throwing: SemaphoreTimeoutError())
+        }
     }
 
     /// Signal that a slot is available.
     func signal() {
         if let waiter = waiters.first {
             waiters.removeFirst()
-            waiter.resume()
+            waiter.continuation.resume()
         } else {
             count += 1
         }

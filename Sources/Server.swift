@@ -36,22 +36,42 @@ func startServer(config: ServerConfig) async throws {
     serverState = ServerState(config: config)
     let router = Router()
 
-    // Health
+    // Health — includes model availability from SDK
     router.get("/health") { _, _ -> Response in
         let active = await serverState.logStore.activeRequests
-        return jsonResponse("{\"status\":\"ok\",\"model\":\"\(modelName)\",\"version\":\"\(version)\",\"active_requests\":\(active)}")
+        let tc = TokenCounter.shared
+        let available = await tc.isAvailable
+        let contextSize = await tc.contextSize
+        let langs = await tc.supportedLanguages
+        let health: [String: Any] = [
+            "status": available ? "ok" : "model_unavailable",
+            "model": modelName,
+            "version": version,
+            "active_requests": active,
+            "context_window": contextSize,
+            "model_available": available,
+            "supported_languages": langs
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: health, options: [.sortedKeys]),
+           let json = String(data: data, encoding: .utf8) {
+            return jsonResponse(json)
+        }
+        return jsonResponse("{\"status\":\"ok\"}")
     }
 
-    // Models
+    // Models — includes context_window and supported_languages from SDK
     router.get("/v1/models") { _, _ -> Response in
-        jsonResponse(jsonString(ModelsListResponse(
+        let tc = TokenCounter.shared
+        let contextSize = await tc.contextSize
+        let langs = await tc.supportedLanguages
+        return jsonResponse(jsonString(ModelsListResponse(
             object: "list",
             data: [.init(
                 id: modelName, object: "model", created: 1719792000, owned_by: "apple",
-                context_window: 4096,
+                context_window: contextSize,
                 supported_parameters: ["temperature", "max_tokens", "seed", "stream", "tools", "tool_choice", "response_format"],
                 unsupported_parameters: ["logprobs", "n", "stop", "presence_penalty", "frequency_penalty"],
-                notes: "Apple on-device model via FoundationModels framework"
+                notes: "Apple on-device model via FoundationModels framework. Supported languages: \(langs.joined(separator: ", "))"
             )]
         )))
     }
@@ -77,13 +97,18 @@ func startServer(config: ServerConfig) async throws {
         }
 
         await serverState.logStore.requestStarted()
-        defer {
-            Task { await serverState.semaphore.signal() }
-            Task { await serverState.logStore.requestFinished() }
-        }
 
-        // Handle the request
-        let result = try await handleChatCompletion(request, context: context)
+        // Handle the request — explicit do/catch to guarantee cleanup
+        let result: (response: Response, trace: ChatRequestTrace)
+        do {
+            result = try await handleChatCompletion(request, context: context)
+        } catch {
+            await serverState.semaphore.signal()
+            await serverState.logStore.requestFinished()
+            throw error
+        }
+        await serverState.semaphore.signal()
+        await serverState.logStore.requestFinished()
 
         // Log it
         let durationMs = Int(Date().timeIntervalSince(start) * 1000)

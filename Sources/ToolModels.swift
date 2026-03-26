@@ -64,29 +64,31 @@ struct ResponseFormat: Decodable, Sendable {
 // MARK: - Type-erased Codable for raw JSON schemas
 
 struct AnyCodable: Codable, Sendable {
-    let value: Any & Sendable
+    let value: (any Sendable)?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
-        if let v = try? c.decode(Bool.self)              { value = v; return }
-        if let v = try? c.decode(Int.self)               { value = v; return }
-        if let v = try? c.decode(Double.self)            { value = v; return }
-        if let v = try? c.decode(String.self)            { value = v; return }
-        if let v = try? c.decode([String: AnyCodable].self) { value = v; return }
-        if let v = try? c.decode([AnyCodable].self)      { value = v; return }
-        value = ""
+        if c.decodeNil()                                       { value = nil; return }
+        if let v = try? c.decode(Bool.self)                    { value = v; return }
+        if let v = try? c.decode(Int.self)                     { value = v; return }
+        if let v = try? c.decode(Double.self)                  { value = v; return }
+        if let v = try? c.decode(String.self)                  { value = v; return }
+        if let v = try? c.decode([String: AnyCodable].self)    { value = v; return }
+        if let v = try? c.decode([AnyCodable].self)            { value = v; return }
+        value = nil
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.singleValueContainer()
+        guard let value else { try c.encodeNil(); return }
         switch value {
         case let v as Bool:                 try c.encode(v)
         case let v as Int:                  try c.encode(v)
-        case let v as Double:               try c.encode(v)
-        case let v as String:               try c.encode(v)
+        case let v as Double:              try c.encode(v)
+        case let v as String:              try c.encode(v)
         case let v as [String: AnyCodable]: try c.encode(v)
-        case let v as [AnyCodable]:         try c.encode(v)
-        default:                            try c.encode("")
+        case let v as [AnyCodable]:        try c.encode(v)
+        default:                            try c.encodeNil()
         }
     }
 }

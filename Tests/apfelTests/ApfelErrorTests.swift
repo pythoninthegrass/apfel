@@ -47,6 +47,13 @@ func runApfelErrorTests() {
         try assertEqual(ApfelError.rateLimited.openAIType, "rate_limit_error")
         try assertEqual(ApfelError.concurrentRequest.openAIType, "rate_limit_error")
     }
+    test("HTTP status codes") {
+        try assertEqual(ApfelError.guardrailViolation.httpStatusCode, 400)
+        try assertEqual(ApfelError.contextOverflow.httpStatusCode, 400)
+        try assertEqual(ApfelError.rateLimited.httpStatusCode, 429)
+        try assertEqual(ApfelError.concurrentRequest.httpStatusCode, 429)
+        try assertEqual(ApfelError.unknown("x").httpStatusCode, 500)
+    }
     test("openAIMessage is non-empty for all cases") {
         let cases: [ApfelError] = [.guardrailViolation, .contextOverflow, .rateLimited,
                                     .concurrentRequest, .unknown("oops")]

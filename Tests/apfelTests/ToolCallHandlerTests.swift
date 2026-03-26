@@ -70,6 +70,35 @@ func runToolCallHandlerTests() {
         try assertTrue(prompt.contains("fn"))
     }
 
+    // MARK: - Edge cases (bug fixes)
+
+    test("handles trailing backticks without crash") {
+        try assertNil(ToolCallHandler.detectToolCall(in: "```"))
+    }
+    test("handles empty code block without crash") {
+        try assertNil(ToolCallHandler.detectToolCall(in: "``````"))
+    }
+
+    // MARK: - JSON escaping in buildSystemPrompt
+
+    test("buildSystemPrompt escapes special characters in descriptions") {
+        let tools = [ToolDef(name: "fn", description: #"Get the "current" weather\today"#, parametersJSON: nil)]
+        let prompt = ToolCallHandler.buildSystemPrompt(tools: tools)
+        try assertTrue(prompt.contains("current"), "missing description content")
+        // Find the JSON array in the output and validate it parses
+        if let startRange = prompt.range(of: "\n["),
+           let _ = prompt.range(of: "\n]", range: startRange.upperBound..<prompt.endIndex) {
+            let jsonSlice = String(prompt[startRange.upperBound...]) // includes [ to end
+            let arrayEnd = jsonSlice.range(of: "\n]")!
+            let jsonStr = "[" + String(jsonSlice[..<arrayEnd.upperBound])
+            let data = jsonStr.data(using: .utf8)!
+            let parsed = try? JSONSerialization.jsonObject(with: data)
+            if parsed == nil {
+                throw TestFailure("Generated JSON is not valid — special characters broke escaping")
+            }
+        }
+    }
+
     // MARK: - Tool result formatting
 
     test("formatToolResult contains name and content") {

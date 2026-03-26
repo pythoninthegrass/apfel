@@ -18,35 +18,6 @@ struct ChatRequestTrace: Sendable {
     let events: [String]
 }
 
-// MARK: - /v1/models
-
-/// GET /v1/models — List available models (static response).
-func handleListModels() -> Response {
-    let response = ModelsListResponse(
-        object: "list",
-        data: [.init(
-            id: modelName,
-            object: "model",
-            created: 1719792000,
-            owned_by: "apple",
-            context_window: 4096,
-            supported_parameters: ["temperature", "max_tokens", "seed", "stream",
-                                    "tools", "tool_choice", "response_format"],
-            unsupported_parameters: ["logprobs", "n", "stop",
-                                      "presence_penalty", "frequency_penalty"],
-            notes: "Apple on-device model via FoundationModels framework"
-        )]
-    )
-    let body = jsonString(response)
-    var headers = HTTPFields()
-    headers[.contentType] = "application/json"
-    return Response(
-        status: .ok,
-        headers: headers,
-        body: .init(byteBuffer: ByteBuffer(string: body))
-    )
-}
-
 // MARK: - /v1/chat/completions
 
 /// POST /v1/chat/completions — Main chat endpoint (streaming + non-streaming).
@@ -113,11 +84,22 @@ func handleChatCompletion(_ request: Request, context: some RequestContext) asyn
     )
 
     // Build session + extract final prompt via ContextManager (Transcript API)
-    let (session, finalPrompt) = ContextManager.makeSession(
-        messages: chatRequest.messages,
-        tools: chatRequest.tools,
-        options: sessionOpts
-    )
+    let session: LanguageModelSession
+    let finalPrompt: String
+    do {
+        (session, finalPrompt) = try await ContextManager.makeSession(
+            messages: chatRequest.messages,
+            tools: chatRequest.tools,
+            options: sessionOpts
+        )
+    } catch {
+        let classified = ApfelError.classify(error)
+        let msg = classified.openAIMessage
+        return (openAIError(status: .init(code: classified.httpStatusCode), message: msg, type: classified.openAIType),
+                ChatRequestTrace(stream: chatRequest.stream == true, estimatedTokens: nil, error: msg,
+                                 requestBody: truncateForLog(requestBodyString),
+                                 responseBody: msg, events: events + ["context build failed: \(msg)"]))
+    }
     events.append("context built history=\(max(0, chatRequest.messages.count - 1)) final_prompt_chars=\(finalPrompt.count)")
 
     let genOpts = makeGenerationOptions(sessionOpts)
@@ -150,8 +132,20 @@ private func nonStreamingResponse(
     requestBody: String,
     events: [String]
 ) async throws -> (response: Response, trace: ChatRequestTrace) {
-    let result = try await session.respond(to: prompt, options: genOpts)
-    let content = result.content
+    let content: String
+    do {
+        let result = try await session.respond(to: prompt, options: genOpts)
+        content = result.content
+    } catch {
+        let classified = ApfelError.classify(error)
+        let msg = classified.openAIMessage
+        return (
+            openAIError(status: .init(code: classified.httpStatusCode), message: msg, type: classified.openAIType),
+            ChatRequestTrace(stream: false, estimatedTokens: nil, error: msg,
+                             requestBody: truncateForLog(requestBody),
+                             responseBody: msg, events: events + ["model error: \(classified.cliLabel)"])
+        )
+    }
 
     // Detect tool calls in response
     let toolCalls = ToolCallHandler.detectToolCall(in: content)
@@ -213,6 +207,9 @@ private func streamingResponse(
     headers[.contentType] = "text/event-stream"
     headers[.cacheControl] = "no-cache"
     headers[.init("Connection")!] = "keep-alive"
+    if serverState?.config.cors == true {
+        headers[.init("Access-Control-Allow-Origin")!] = "*"
+    }
     let eventBox = TraceBuffer(events: events + ["stream start"])
 
     let responseStream = AsyncStream<ByteBuffer> { continuation in
@@ -246,18 +243,45 @@ private func streamingResponse(
                     prev = content
                 }
 
-                let stopLine = sseDataLine(sseStopChunk(id: id, created: created))
-                responseLines.append(stopLine.trimmingCharacters(in: .whitespacesAndNewlines))
-                continuation.yield(ByteBuffer(string: stopLine))
+                // Check accumulated response for tool calls before emitting final chunk
+                let toolCalls = ToolCallHandler.detectToolCall(in: prev)
+                if let calls = toolCalls {
+                    let openAIToolCalls = calls.map {
+                        ToolCall(id: $0.id, type: "function",
+                                 function: ToolCallFunction(name: $0.name, arguments: $0.argumentsString))
+                    }
+                    let toolChunk = ChatCompletionChunk(
+                        id: id, object: "chat.completion.chunk", created: created, model: modelName,
+                        choices: [.init(
+                            index: 0,
+                            delta: .init(role: nil, content: nil, tool_calls: openAIToolCalls),
+                            finish_reason: "tool_calls"
+                        )]
+                    )
+                    let toolLine = sseDataLine(toolChunk)
+                    responseLines.append(toolLine.trimmingCharacters(in: .whitespacesAndNewlines))
+                    continuation.yield(ByteBuffer(string: toolLine))
+                    eventBox.append("tool_calls detected: \(calls.map(\.name).joined(separator: ", "))")
+                } else {
+                    let stopLine = sseDataLine(sseStopChunk(id: id, created: created))
+                    responseLines.append(stopLine.trimmingCharacters(in: .whitespacesAndNewlines))
+                    continuation.yield(ByteBuffer(string: stopLine))
+                }
                 continuation.yield(ByteBuffer(string: sseDone))
                 responseLines.append("data: [DONE]")
-                eventBox.append("sent [DONE] total_chars=\(prev.count)")
+                let finishReason = toolCalls != nil ? "tool_calls" : "stop"
+                eventBox.append("sent [DONE] total_chars=\(prev.count) finish_reason=\(finishReason)")
             } catch {
-                let errMsg = "data: {\"error\":\"\(error.localizedDescription)\"}\n\n"
+                let classified = ApfelError.classify(error)
+                let errPayload = OpenAIErrorResponse(error: .init(
+                    message: classified.openAIMessage, type: classified.openAIType, param: nil, code: nil))
+                let errJSON = jsonString(errPayload, pretty: false)
+                let errMsg = "data: \(errJSON)\n\n"
                 responseLines.append(errMsg.trimmingCharacters(in: .whitespacesAndNewlines))
                 continuation.yield(ByteBuffer(string: errMsg))
-                streamError = error.localizedDescription
-                eventBox.append("stream error: \(error.localizedDescription)")
+                continuation.yield(ByteBuffer(string: sseDone))
+                streamError = classified.openAIMessage
+                eventBox.append("stream error: \(classified.cliLabel) \(classified.openAIMessage)")
             }
 
             let completionLog = RequestLog(
@@ -311,11 +335,14 @@ final class TraceBuffer: @unchecked Sendable {
 
 // MARK: - Error Helper
 
-/// Create an OpenAI-formatted error response.
+/// Create an OpenAI-formatted error response (with CORS headers when enabled).
 func openAIError(status: HTTPResponse.Status, message: String, type: String, code: String? = nil) -> Response {
     let error = OpenAIErrorResponse(error: .init(message: message, type: type, param: nil, code: code))
     let body = jsonString(error)
     var headers = HTTPFields()
     headers[.contentType] = "application/json"
+    if serverState?.config.cors == true {
+        headers[.init("Access-Control-Allow-Origin")!] = "*"
+    }
     return Response(status: status, headers: headers, body: .init(byteBuffer: ByteBuffer(string: body)))
 }
