@@ -1,9 +1,9 @@
 # apfel — Status Overview
 
-**Version:** 0.5.0
-**Date:** 2026-03-26
-**Build:** ✅ Clean (Swift 6.3 / macOS 26.4 SDK)
-**Tests:** ✅ 28 unit tests + 15 integration tests
+**Version:** 0.6.4
+**Date:** 2026-03-31
+**Build:** ✅ Clean (`make install`, Swift 6.3 / macOS 26.4 SDK)
+**Tests:** ✅ 51 unit tests + 51 integration tests
 
 ---
 
@@ -33,5 +33,11 @@
 | 009 | Environment variables | v0.5.0 |
 | 010 | `--system-file` flag | v0.5.0 |
 | 011 | Semantic exit codes | v0.5.0 |
+| 012 | OpenAPI spec validation | v0.6.x |
+| 013 | Tool call args not JSON | v0.6.x |
+| 014 | Allow role:"tool" as last message | v0.6.x |
+| 015 | Deduplicate tool prompt/schema assembly | v0.6.4 |
+| 016 | Centralize chat handler error/trace construction | v0.6.4 |
+| 017 | Consolidate transcript budget candidate assembly | v0.6.4 |
 
 **Zero open tickets.**

@@ -25,15 +25,20 @@ func trimWithSummary(
     let halfBudget = budget / 2
     var recentEntries: [Transcript.Entry] = []
     for entry in history.reversed() {
-        var candidate = base + [entry] + recentEntries
-        if let final { candidate.append(final) }
-        if await TokenCounter.shared.count(entries: candidate) > halfBudget { break }
+        if !(await fitsTranscriptBudget(
+            base: base,
+            history: [entry] + recentEntries,
+            final: final,
+            budget: halfBudget
+        )) {
+            break
+        }
         recentEntries.insert(entry, at: 0)
     }
 
     let oldEntries = Array(history.dropLast(recentEntries.count))
     guard !oldEntries.isEmpty else {
-        return base + recentEntries
+        return assembleTranscriptEntries(base: base, history: recentEntries)
     }
 
     // Render old entries to text for summarization
@@ -54,7 +59,7 @@ func trimWithSummary(
     let summaryEntry = Transcript.Entry.response(
         Transcript.Response(assetIDs: [], segments: [.text(segment)]))
 
-    return base + [summaryEntry] + recentEntries
+    return assembleTranscriptEntries(base: base, history: [summaryEntry] + recentEntries)
 }
 
 // MARK: - Helpers

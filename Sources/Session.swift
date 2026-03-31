@@ -77,6 +77,38 @@ func sessionInputEntries(
     Array(Array(session.transcript)) + [makePromptEntry(finalPrompt, options: options)]
 }
 
+func assembleTranscriptEntries(
+    base: [Transcript.Entry],
+    history: [Transcript.Entry],
+    final: Transcript.Entry? = nil
+) -> [Transcript.Entry] {
+    var entries = base
+    entries.append(contentsOf: history)
+    if let final {
+        entries.append(final)
+    }
+    return entries
+}
+
+func fitsTranscriptBudget(
+    _ entries: [Transcript.Entry],
+    budget: Int
+) async -> Bool {
+    await TokenCounter.shared.count(entries: entries) <= budget
+}
+
+func fitsTranscriptBudget(
+    base: [Transcript.Entry],
+    history: [Transcript.Entry],
+    final: Transcript.Entry? = nil,
+    budget: Int
+) async -> Bool {
+    await fitsTranscriptBudget(
+        assembleTranscriptEntries(base: base, history: history, final: final),
+        budget: budget
+    )
+}
+
 func trimHistoryEntriesToBudget(
     baseEntries: [Transcript.Entry],
     historyEntries: [Transcript.Entry],
@@ -84,11 +116,8 @@ func trimHistoryEntriesToBudget(
     budget: Int,
     config: ContextConfig = .defaults
 ) async -> [Transcript.Entry]? {
-    var requiredEntries = baseEntries
-    if let finalEntry {
-        requiredEntries.append(finalEntry)
-    }
-    guard await TokenCounter.shared.count(entries: requiredEntries) <= budget else {
+    let requiredEntries = assembleTranscriptEntries(base: baseEntries, history: [], final: finalEntry)
+    guard await fitsTranscriptBudget(requiredEntries, budget: budget) else {
         return nil
     }
 
@@ -108,9 +137,10 @@ func trimHistoryEntriesToBudget(
             base: baseEntries, history: historyEntries, final: finalEntry, budget: budget)
     case .strict:
         // No trimming — return all history or nil if it exceeds budget
-        var all = baseEntries + historyEntries
-        if let finalEntry { all.append(finalEntry) }
-        return await TokenCounter.shared.count(entries: all) <= budget ? all : nil
+        let all = assembleTranscriptEntries(base: baseEntries, history: historyEntries, final: finalEntry)
+        return await fitsTranscriptBudget(all, budget: budget)
+            ? all
+            : nil
     }
 }
 
@@ -122,12 +152,12 @@ func trimNewestFirst(
 ) async -> [Transcript.Entry] {
     var kept: [Transcript.Entry] = []
     for entry in history.reversed() {
-        var candidate = base + [entry] + kept
-        if let final { candidate.append(final) }
-        if await TokenCounter.shared.count(entries: candidate) > budget { break }
+        if !(await fitsTranscriptBudget(base: base, history: [entry] + kept, final: final, budget: budget)) {
+            break
+        }
         kept.insert(entry, at: 0)
     }
-    return base + kept
+    return assembleTranscriptEntries(base: base, history: kept)
 }
 
 // MARK: - Strategy: Oldest First
@@ -138,12 +168,12 @@ func trimOldestFirst(
 ) async -> [Transcript.Entry] {
     var kept: [Transcript.Entry] = []
     for entry in history {
-        var candidate = base + kept + [entry]
-        if let final { candidate.append(final) }
-        if await TokenCounter.shared.count(entries: candidate) > budget { break }
+        if !(await fitsTranscriptBudget(base: base, history: kept + [entry], final: final, budget: budget)) {
+            break
+        }
         kept.append(entry)
     }
-    return base + kept
+    return assembleTranscriptEntries(base: base, history: kept)
 }
 
 // MARK: - Strategy: Sliding Window

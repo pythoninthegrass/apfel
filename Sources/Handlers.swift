@@ -34,36 +34,55 @@ func handleChatCompletion(_ request: Request, context: some RequestContext) asyn
         chatRequest = try JSONDecoder().decode(ChatCompletionRequest.self, from: body)
     } catch {
         let msg = "Invalid JSON: \(error.localizedDescription)"
-        return (openAIError(status: .badRequest, message: msg, type: "invalid_request_error"),
-                ChatRequestTrace(stream: false, estimatedTokens: nil, error: msg,
-                                 requestBody: truncateForLog(requestBodyString),
-                                 responseBody: msg, events: events + ["decode failed: \(msg)"]))
+        return chatFailure(
+            status: .badRequest,
+            message: msg,
+            type: "invalid_request_error",
+            stream: false,
+            requestBody: requestBodyString,
+            events: events,
+            event: "decode failed: \(msg)"
+        )
     }
 
     // Validate: must have at least one message
     guard !chatRequest.messages.isEmpty else {
         let msg = "'messages' must contain at least one message"
-        return (openAIError(status: .badRequest, message: msg, type: "invalid_request_error"),
-                ChatRequestTrace(stream: chatRequest.stream == true, estimatedTokens: nil, error: msg,
-                                 requestBody: truncateForLog(requestBodyString),
-                                 responseBody: msg, events: events + ["validation failed: empty messages"]))
+        return chatFailure(
+            status: .badRequest,
+            message: msg,
+            type: "invalid_request_error",
+            stream: chatRequest.stream == true,
+            requestBody: requestBodyString,
+            events: events,
+            event: "validation failed: empty messages"
+        )
     }
 
     if let unsupported = unsupportedParameter(in: chatRequest) {
-        return (openAIError(status: .badRequest, message: unsupported.message, type: "invalid_request_error"),
-                ChatRequestTrace(stream: chatRequest.stream == true, estimatedTokens: nil, error: unsupported.message,
-                                 requestBody: truncateForLog(requestBodyString),
-                                 responseBody: unsupported.message,
-                                 events: events + ["validation failed: unsupported parameter \(unsupported.name)"]))
+        return chatFailure(
+            status: .badRequest,
+            message: unsupported.message,
+            type: "invalid_request_error",
+            stream: chatRequest.stream == true,
+            requestBody: requestBodyString,
+            events: events,
+            event: "validation failed: unsupported parameter \(unsupported.name)"
+        )
     }
 
     // Validate: last message must be user or tool (tool = standard tool-calling flow)
     guard ["user", "tool"].contains(chatRequest.messages.last?.role) else {
         let msg = "Last message must have role 'user' or 'tool'"
-        return (openAIError(status: .badRequest, message: msg, type: "invalid_request_error"),
-                ChatRequestTrace(stream: chatRequest.stream == true, estimatedTokens: nil, error: msg,
-                                 requestBody: truncateForLog(requestBodyString),
-                                 responseBody: msg, events: events + ["validation failed: last role != user/tool"]))
+        return chatFailure(
+            status: .badRequest,
+            message: msg,
+            type: "invalid_request_error",
+            stream: chatRequest.stream == true,
+            requestBody: requestBodyString,
+            events: events,
+            event: "validation failed: last role != user/tool"
+        )
     }
 
     // Reject image content (not supported by Apple's on-device model)
@@ -75,10 +94,15 @@ func handleChatCompletion(_ request: Request, context: some RequestContext) asyn
     }
     if hasImages {
         let msg = "Image content is not supported by the Apple on-device model"
-        return (openAIError(status: .badRequest, message: msg, type: "invalid_request_error"),
-                ChatRequestTrace(stream: chatRequest.stream == true, estimatedTokens: nil, error: msg,
-                                 requestBody: truncateForLog(requestBodyString),
-                                 responseBody: msg, events: events + ["rejected: image content"]))
+        return chatFailure(
+            status: .badRequest,
+            message: msg,
+            type: "invalid_request_error",
+            stream: chatRequest.stream == true,
+            requestBody: requestBodyString,
+            events: events,
+            event: "rejected: image content"
+        )
     }
 
     events.append("decoded messages=\(chatRequest.messages.count) stream=\(chatRequest.stream == true) model=\(chatRequest.model)")
@@ -114,10 +138,15 @@ func handleChatCompletion(_ request: Request, context: some RequestContext) asyn
     } catch {
         let classified = ApfelError.classify(error)
         let msg = classified.openAIMessage
-        return (openAIError(status: .init(code: classified.httpStatusCode), message: msg, type: classified.openAIType),
-                ChatRequestTrace(stream: chatRequest.stream == true, estimatedTokens: nil, error: msg,
-                                 requestBody: truncateForLog(requestBodyString),
-                                 responseBody: msg, events: events + ["context build failed: \(msg)"]))
+        return chatFailure(
+            status: .init(code: classified.httpStatusCode),
+            message: msg,
+            type: classified.openAIType,
+            stream: chatRequest.stream == true,
+            requestBody: requestBodyString,
+            events: events,
+            event: "context build failed: \(msg)"
+        )
     }
     events.append("context built history=\(max(0, chatRequest.messages.count - 1)) final_prompt_chars=\(finalPrompt.count)")
 
@@ -162,11 +191,14 @@ private func nonStreamingResponse(
     } catch {
         let classified = ApfelError.classify(error)
         let msg = classified.openAIMessage
-        return (
-            openAIError(status: .init(code: classified.httpStatusCode), message: msg, type: classified.openAIType),
-            ChatRequestTrace(stream: false, estimatedTokens: nil, error: msg,
-                             requestBody: truncateForLog(requestBody),
-                             responseBody: msg, events: events + ["model error: \(classified.cliLabel)"])
+        return chatFailure(
+            status: .init(code: classified.httpStatusCode),
+            message: msg,
+            type: classified.openAIType,
+            stream: false,
+            requestBody: requestBody,
+            events: events,
+            event: "model error: \(classified.cliLabel)"
         )
     }
 
@@ -422,6 +454,28 @@ private func unsupportedParameter(in request: ChatCompletionRequest) -> Unsuppor
     }
 
     return nil
+}
+
+private func chatFailure(
+    status: HTTPResponse.Status,
+    message: String,
+    type: String,
+    stream: Bool,
+    requestBody: String,
+    events: [String],
+    event: String
+) -> (response: Response, trace: ChatRequestTrace) {
+    (
+        openAIError(status: status, message: message, type: type),
+        ChatRequestTrace(
+            stream: stream,
+            estimatedTokens: nil,
+            error: message,
+            requestBody: truncateForLog(requestBody),
+            responseBody: message,
+            events: events + [event]
+        )
+    )
 }
 
 // MARK: - Error Helper

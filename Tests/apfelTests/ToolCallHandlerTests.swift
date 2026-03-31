@@ -1,6 +1,15 @@
 import Foundation
 import ApfelCore
 
+private func extractToolSchemaJSON(from prompt: String) -> String? {
+    guard let startRange = prompt.range(of: "\n[", options: .backwards),
+          let endIndex = prompt.lastIndex(of: "]") else {
+        return nil
+    }
+    let startIndex = prompt.index(before: startRange.upperBound)
+    return String(prompt[startIndex...endIndex])
+}
+
 func runToolCallHandlerTests() {
 
     // MARK: - Detection
@@ -216,5 +225,46 @@ func runToolCallHandlerTests() {
         let result = ToolCallHandler.buildFallbackPrompt(tools: tools)
         try assertTrue(result.contains("fn"), "missing tool name")
         try assertTrue(result.contains("Does stuff"), "missing description")
+    }
+
+    test("buildFallbackPrompt omits invalid parameters JSON but stays valid") {
+        let tools = [ToolDef(name: "fn", description: "Does stuff", parametersJSON: "{not json}")]
+        let prompt = ToolCallHandler.buildFallbackPrompt(tools: tools)
+        guard let json = extractToolSchemaJSON(from: prompt),
+              let data = json.data(using: .utf8),
+              let parsed = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              let first = parsed.first else {
+            throw TestFailure("Failed to parse fallback schema JSON")
+        }
+        try assertEqual(first["name"] as? String, "fn")
+        try assertEqual(first["description"] as? String, "Does stuff")
+        try assertNil(first["parameters"])
+    }
+
+    test("buildSystemPrompt preserves parsed parameters JSON") {
+        let tools = [ToolDef(
+            name: "get_weather",
+            description: "Weather lookup",
+            parametersJSON: #"{"type":"object","properties":{"city":{"type":"string"}}}"#
+        )]
+        let prompt = ToolCallHandler.buildSystemPrompt(tools: tools)
+        guard let json = extractToolSchemaJSON(from: prompt),
+              let data = json.data(using: .utf8),
+              let parsed = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              let parameters = parsed.first?["parameters"] as? [String: Any] else {
+            throw TestFailure("Failed to parse system prompt schema JSON")
+        }
+        try assertEqual(parameters["type"] as? String, "object")
+        try assertNotNil(parameters["properties"])
+    }
+
+    test("buildFallbackPrompt and buildSystemPrompt serialize schemas identically") {
+        let tools = [
+            ToolDef(name: "fn", description: "Does stuff", parametersJSON: #"{"type":"object"}"#),
+            ToolDef(name: "other", description: nil, parametersJSON: nil),
+        ]
+        let fallbackJSON = extractToolSchemaJSON(from: ToolCallHandler.buildFallbackPrompt(tools: tools))
+        let systemJSON = extractToolSchemaJSON(from: ToolCallHandler.buildSystemPrompt(tools: tools))
+        try assertEqual(fallbackJSON, systemJSON)
     }
 }

@@ -40,52 +40,15 @@ public enum ToolCallHandler {
     /// Build text-based schema injection for tools that failed native conversion.
     public static func buildFallbackPrompt(tools: [ToolDef]) -> String {
         guard !tools.isEmpty else { return "" }
-        var schemaObjects: [[String: Any]] = []
-        for tool in tools {
-            var obj: [String: Any] = ["name": tool.name]
-            if let desc = tool.description { obj["description"] = desc }
-            if let params = tool.parametersJSON,
-               let data = params.data(using: .utf8),
-               let parsed = try? JSONSerialization.jsonObject(with: data) {
-                obj["parameters"] = parsed
-            }
-            schemaObjects.append(obj)
-        }
-        let schemasJSON: String
-        if let data = try? JSONSerialization.data(withJSONObject: schemaObjects, options: [.prettyPrinted, .sortedKeys]),
-           let str = String(data: data, encoding: .utf8) {
-            schemasJSON = str
-        } else {
-            schemasJSON = "[]"
-        }
         return """
         Additional function schemas (text fallback):
-        \(schemasJSON)
+        \(serializedToolSchemas(tools))
         """
     }
 
     /// Build the full tool-calling instruction block (convenience — combines format + schemas).
     /// Used when ALL tools need text injection (no native ToolDefinitions).
     public static func buildSystemPrompt(tools: [ToolDef]) -> String {
-        var schemaObjects: [[String: Any]] = []
-        for tool in tools {
-            var obj: [String: Any] = ["name": tool.name]
-            if let desc = tool.description { obj["description"] = desc }
-            if let params = tool.parametersJSON,
-               let data = params.data(using: .utf8),
-               let parsed = try? JSONSerialization.jsonObject(with: data) {
-                obj["parameters"] = parsed
-            }
-            schemaObjects.append(obj)
-        }
-        let schemasJSON: String
-        if let data = try? JSONSerialization.data(withJSONObject: schemaObjects, options: [.prettyPrinted, .sortedKeys]),
-           let str = String(data: data, encoding: .utf8) {
-            schemasJSON = str
-        } else {
-            schemasJSON = "[]"
-        }
-
         return """
         ## Available Functions
         When you need to call a function, respond ONLY with this exact JSON (no other text before or after):
@@ -94,7 +57,7 @@ public enum ToolCallHandler {
         Replace <unique> with a short unique string, <name> with the function name, and <escaped_json_string> with the arguments as a JSON-encoded string.
 
         Available functions:
-        \(schemasJSON)
+        \(serializedToolSchemas(tools))
         """
     }
 
@@ -147,6 +110,31 @@ public enum ToolCallHandler {
         }
 
         return candidates
+    }
+
+    private static func serializedToolSchemas(_ tools: [ToolDef]) -> String {
+        let schemaObjects = tools.map { toolSchemaObject(for: $0) }
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: schemaObjects,
+            options: [.prettyPrinted, .sortedKeys]
+        ),
+        let string = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return string
+    }
+
+    private static func toolSchemaObject(for tool: ToolDef) -> [String: Any] {
+        var object: [String: Any] = ["name": tool.name]
+        if let description = tool.description {
+            object["description"] = description
+        }
+        if let parametersJSON = tool.parametersJSON,
+           let data = parametersJSON.data(using: .utf8),
+           let parsed = try? JSONSerialization.jsonObject(with: data) {
+            object["parameters"] = parsed
+        }
+        return object
     }
 
     /// Ensure an arguments string is valid JSON per OpenAI spec.
