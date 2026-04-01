@@ -139,9 +139,6 @@ while i < args.count {
     case "--serve":
         mode = "serve"
 
-    case "--gui":
-        mode = "gui"
-
     case "--port":
         i += 1
         guard i < args.count, let p = Int(args[i]), p > 0, p < 65536 else {
@@ -279,7 +276,7 @@ let sessionOpts = SessionOptions(
 )
 
 // Check model availability for modes that need it
-if mode != "model-info" && mode != "gui" && mode != "serve" {
+if mode != "model-info" && mode != "serve" {
     let available = await TokenCounter.shared.isAvailable
     if !available {
         printError("Apple Intelligence is not enabled or model is not ready. Run: apfel --model-info")
@@ -289,9 +286,6 @@ if mode != "model-info" && mode != "gui" && mode != "serve" {
 
 do {
     switch mode {
-    case "gui":
-        startGUI()
-
     case "serve":
         let config = ServerConfig(
             host: serverHost,

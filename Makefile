@@ -51,7 +51,6 @@ build: check-toolchain bump-patch generate-build-info update-readme
 
 install: build
 	@pkill -f "apfel --serve" 2>/dev/null || true
-	@pkill -f "apfel --gui" 2>/dev/null || true
 	@sleep 1
 	@if [ -w "$(PREFIX)/bin" ]; then \
 		install .build/release/$(BINARY) $(PREFIX)/bin/$(BINARY); \

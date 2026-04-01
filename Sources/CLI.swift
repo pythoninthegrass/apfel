@@ -241,7 +241,7 @@ func printRelease() {
     \(styled("├", .dim)) on-device:  100% local inference (no cloud, no API keys)
     \(styled("├", .dim)) model:      \(modelName) (FoundationModels framework)
     \(styled("├", .dim)) context:    4096 tokens
-    \(styled("├", .dim)) modes:      single, stream, chat, serve, gui
+    \(styled("├", .dim)) modes:      single, stream, chat, serve
     \(styled("├", .dim)) server:     OpenAI-compatible (/v1/chat/completions)
     \(styled("├", .dim)) tools:      function calling via JSON schema
     \(styled("├", .dim)) formats:    plain, json, streaming SSE

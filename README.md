@@ -1,6 +1,6 @@
 # apfel
 
-[![Version 0.6.9](https://img.shields.io/badge/version-0.6.9-blue)](https://github.com/Arthur-Ficial/apfel)
+[![Version 0.6.10](https://img.shields.io/badge/version-0.6.10-blue)](https://github.com/Arthur-Ficial/apfel)
 [![Swift 6.3+](https://img.shields.io/badge/Swift-6.3%2B-F05138?logo=swift&logoColor=white)](https://swift.org)
 [![macOS 26+](https://img.shields.io/badge/macOS-26%2B-000000?logo=apple&logoColor=white)](https://developer.apple.com/macos/)
 [![No Xcode Required](https://img.shields.io/badge/Xcode-not%20required-orange)](https://developer.apple.com/xcode/resources/)
@@ -13,17 +13,14 @@ No API keys. No cloud. No subscriptions. No per-token billing. The AI is already
 
 ## What is this
 
-Every Mac with Apple Silicon has a **built-in LLM** - Apple's on-device foundation model, shipped as part of Apple Intelligence. Apple provides the [FoundationModels framework](https://developer.apple.com/documentation/foundationmodels) (macOS 26+) to access it, but only exposes it through Siri and system features. **apfel wraps it** in a CLI, an HTTP server, and a debug GUI - so you can actually use it. All inference runs **on-device**, no network calls.
+Every Mac with Apple Silicon has a **built-in LLM** - Apple's on-device foundation model, shipped as part of Apple Intelligence. Apple provides the [FoundationModels framework](https://developer.apple.com/documentation/foundationmodels) (macOS 26+) to access it, but only exposes it through Siri and system features. **apfel wraps it** in a CLI and an HTTP server - so you can actually use it. All inference runs **on-device**, no network calls.
 
 - **UNIX tool** - `echo "summarize this" | apfel` - pipe-friendly, JSON output, exit codes, env vars
 - **OpenAI-compatible server** - `apfel --serve` - drop-in replacement at `localhost:11434`, works with any OpenAI SDK
-- **Debug GUI** - `apfel --gui` - native SwiftUI inspector for requests, responses, and streaming events
 - **Tool calling** - function calling with schema conversion, full round-trip support
 - **Zero cost** - no API keys, no cloud, no subscriptions, 4096-token context window
 
 ![apfel CLI](screenshots/cli.png)
-
-![apfel GUI Debug Inspector](screenshots/gui-chat.png)
 
 ## Requirements & Install
 
@@ -116,14 +113,6 @@ apfel --chat --context-strategy summarize        # compress old turns via on-dev
 apfel --chat --context-strategy strict           # error on overflow, no trimming
 apfel --chat --context-output-reserve 256        # custom output token reserve
 ```
-
-### Debug GUI
-
-```bash
-apfel --gui
-```
-
-Inspect every request/response, copy curl commands, view SSE streams, track token budgets.
 
 ## Demos
 
@@ -221,7 +210,6 @@ apfel [OPTIONS] <prompt>       Single prompt
 apfel --chat                   Interactive conversation
 apfel --stream <prompt>        Stream response tokens
 apfel --serve                  Start OpenAI-compatible server
-apfel --gui                    Launch debug GUI
 apfel --model-info             Print model capabilities
 apfel --release                Show detailed release and build info
 ```
@@ -293,16 +281,15 @@ apfel --release                Show detailed release and build info
 ```
 CLI (single/stream/chat) ──┐
                            ├─→ FoundationModels.SystemLanguageModel
-HTTP Server (/v1/*) ───────┤   (100% on-device, zero network)
-                           │
-GUI (SwiftUI) ─── HTTP ────┘   ContextManager → Transcript API
+HTTP Server (/v1/*) ───────┘   (100% on-device, zero network)
+                                ContextManager → Transcript API
                                 SchemaConverter → native ToolDefinitions
                                 TokenCounter → real token counts (SDK 26.4)
 ```
 
 Built with Swift 6.3 strict concurrency. Single `Package.swift`, three targets:
 - `ApfelCore` - pure logic library (no FoundationModels dependency, unit-testable)
-- `apfel` - executable (CLI + server + GUI)
+- `apfel` - executable (CLI + server)
 - `apfel-tests` - 48 unit tests
 
 **No Xcode required.** Builds and tests with Command Line Tools only.
@@ -332,6 +319,10 @@ Every `make build`/`make install` automatically:
 - Bumps the patch version (`.version` file is the single source of truth)
 - Updates the README version badge
 - Generates build metadata (commit, date, Swift version) viewable via `apfel --release`
+
+## Related Projects
+
+- [apfel-gui](https://github.com/Arthur-Ficial/apfel-gui) — Native macOS SwiftUI debug GUI for apfel (chat, request inspector, logs, TTS/STT)
 
 ## Examples
 
