@@ -194,3 +194,114 @@ def test_stream_returns_content():
     result = run_cli(["--stream", "Reply with the single word OK."], timeout=90)
     assert result.returncode == 0
     assert result.stdout.strip()
+
+
+# --- File flag (-f/--file) tests (GH-12) ---
+
+
+def test_help_shows_file_flag():
+    result = run_cli(["--help"])
+    assert result.returncode == 0
+    assert "--file" in result.stdout
+    assert "-f," in result.stdout
+
+
+def test_file_flag_missing_path():
+    result = run_cli(["-f"])
+    assert result.returncode == 2
+    assert "requires a file path" in result.stderr
+
+
+def test_file_flag_nonexistent_file():
+    result = run_cli(["-f", "/tmp/apfel_no_such_file_ever.txt", "summarize"])
+    assert result.returncode == 2
+    assert "Cannot read file" in result.stderr
+
+
+def test_file_flag_with_prompt():
+    """apfel -f <file> <prompt> should prepend file content to the prompt."""
+    require_model()
+    tmp = pathlib.Path("/tmp/apfel_test_file_flag.txt")
+    tmp.write_text("The capital of Austria is Vienna.")
+    try:
+        result = run_cli(
+            ["-q", "-o", "json", "-f", str(tmp), "What city is mentioned? Reply with just the city name."],
+            timeout=90,
+        )
+        assert result.returncode == 0
+        payload = json.loads(result.stdout)
+        assert "vienna" in payload["content"].lower()
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def test_file_flag_no_prompt():
+    """apfel -f <file> with no prompt argument should use file content as the prompt."""
+    require_model()
+    tmp = pathlib.Path("/tmp/apfel_test_file_noprompt.txt")
+    tmp.write_text("What is 2+2? Reply with just the number.")
+    try:
+        result = run_cli(
+            ["-q", "-o", "json", "-f", str(tmp)],
+            timeout=90,
+        )
+        assert result.returncode == 0
+        payload = json.loads(result.stdout)
+        assert payload["content"].strip()
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def test_multiple_file_flags():
+    """apfel -f a.txt -f b.txt <prompt> should include content from both files."""
+    require_model()
+    tmp_a = pathlib.Path("/tmp/apfel_test_multi_a.txt")
+    tmp_b = pathlib.Path("/tmp/apfel_test_multi_b.txt")
+    tmp_a.write_text("Fact A: The sky is blue.")
+    tmp_b.write_text("Fact B: Grass is green.")
+    try:
+        result = run_cli(
+            ["-q", "-o", "json", "-f", str(tmp_a), "-f", str(tmp_b),
+             "List both facts. Reply with just the two facts, one per line."],
+            timeout=90,
+        )
+        assert result.returncode == 0
+        payload = json.loads(result.stdout)
+        content = payload["content"].lower()
+        assert "blue" in content
+        assert "green" in content
+    finally:
+        tmp_a.unlink(missing_ok=True)
+        tmp_b.unlink(missing_ok=True)
+
+
+def test_stdin_with_prompt_argument():
+    """Piped stdin + prompt argument should combine (stdin prepended to prompt)."""
+    require_model()
+    result = run_cli(
+        ["-q", "-o", "json", "What city is mentioned above? Reply with just the city name."],
+        input_text="The capital of France is Paris.",
+        timeout=90,
+    )
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert "paris" in payload["content"].lower()
+
+
+def test_file_flag_with_stdin_and_prompt():
+    """apfel -f <file> <prompt> with piped stdin should include all three."""
+    require_model()
+    tmp = pathlib.Path("/tmp/apfel_test_file_stdin.txt")
+    tmp.write_text("File content: The answer is 42.")
+    try:
+        result = run_cli(
+            ["-q", "-o", "json", "-f", str(tmp),
+             "What number is mentioned? Reply with just the number."],
+            input_text="Stdin content: ignore this.",
+            timeout=90,
+        )
+        assert result.returncode == 0
+        payload = json.loads(result.stdout)
+        assert "42" in payload["content"]
+    finally:
+        tmp.unlink(missing_ok=True)

@@ -262,11 +262,13 @@ func printUsage() {
 
     \(styled("USAGE:", .yellow, .bold))
       \(appName) [OPTIONS] <prompt>       Send a single prompt
+      \(appName) -f <file> <prompt>       Attach file content to prompt
       \(appName) --chat                   Interactive conversation
       \(appName) --stream <prompt>        Stream a single response
       \(appName) --serve                  Start OpenAI-compatible HTTP server
 
     \(styled("OPTIONS:", .yellow, .bold))
+      -f, --file <path>         Attach file content to prompt (repeatable)
       -s, --system <text>       Set a system prompt
           --system-file <path>  Read system prompt from file
       -o, --output <format>     Output format: plain, json [default: plain]
@@ -324,6 +326,9 @@ func printUsage() {
       \(appName) -s "You are a pirate" --chat
       \(appName) --system-file prompt.txt "Analyze this"
       echo "Summarize this" | \(appName)
+      \(appName) -f code.swift "Explain this code"
+      \(appName) -f a.txt -f b.txt "Compare these files"
+      cat README.md | \(appName) "Summarize this"
       \(appName) -o json "Translate to German: hello" | jq .content
       APFEL_SYSTEM_PROMPT="Be brief" \(appName) "Explain TCP"
       \(appName) --serve --port 3000 --host 0.0.0.0 --cors

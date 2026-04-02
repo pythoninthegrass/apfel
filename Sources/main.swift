@@ -88,6 +88,7 @@ var cliPermissive: Bool = false
 var cliContextStrategy: ContextStrategy? = env["APFEL_CONTEXT_STRATEGY"].flatMap { ContextStrategy(rawValue: $0) }
 var cliContextMaxTurns: Int? = env["APFEL_CONTEXT_MAX_TURNS"].flatMap { Int($0) }
 var cliContextOutputReserve: Int? = env["APFEL_CONTEXT_OUTPUT_RESERVE"].flatMap { Int($0) }.flatMap { $0 > 0 ? $0 : nil }
+var fileContents: [String] = []
 
 var i = 0
 while i < args.count {
@@ -238,6 +239,21 @@ while i < args.count {
     case "--model-info":
         mode = "model-info"
 
+    case "-f", "--file":
+        i += 1
+        guard i < args.count else {
+            printError("--file requires a file path")
+            exit(exitUsageError)
+        }
+        let path = args[i]
+        do {
+            let content = try String(contentsOfFile: path, encoding: .utf8)
+            fileContents.append(content)
+        } catch {
+            printError("Cannot read file: \(path)")
+            exit(exitUsageError)
+        }
+
     default:
         if args[i].hasPrefix("-") {
             printError("unknown option: \(args[i])")
@@ -250,13 +266,30 @@ while i < args.count {
     i += 1
 }
 
-// If no prompt was given but stdin is piped, read stdin as the prompt
-if prompt.isEmpty && mode == "single" && isatty(STDIN_FILENO) == 0 {
+// Read stdin when piped -- as the prompt (no args) or prepended to the prompt
+if mode == "single" && isatty(STDIN_FILENO) == 0 {
     var lines: [String] = []
     while let line = readLine(strippingNewline: false) {
         lines.append(line)
     }
-    prompt = lines.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+    let stdinContent = lines.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+    if !stdinContent.isEmpty {
+        if prompt.isEmpty && fileContents.isEmpty {
+            prompt = stdinContent
+        } else {
+            fileContents.append(stdinContent)
+        }
+    }
+}
+
+// Prepend file/stdin content to the prompt
+if !fileContents.isEmpty {
+    let combined = fileContents.joined(separator: "\n\n")
+    if prompt.isEmpty {
+        prompt = combined
+    } else {
+        prompt = combined + "\n\n" + prompt
+    }
 }
 
 // MARK: - Dispatch
