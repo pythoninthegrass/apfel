@@ -4,10 +4,14 @@
 // ============================================================================
 
 import Foundation
+import Darwin
 import ApfelCore
 
 /// A connection to a single MCP server process (stdio transport).
 final class MCPConnection: @unchecked Sendable {
+    private static let startupTimeoutMilliseconds = 5_000
+    private static let toolCallTimeoutMilliseconds = 5_000
+
     let path: String
     private(set) var tools: [OpenAITool]
 
@@ -45,19 +49,49 @@ final class MCPConnection: @unchecked Sendable {
 
         try proc.run()
 
-        // Initialize handshake
-        let initResp = try sendAndReceive(MCPProtocol.initializeRequest(id: allocId()))
-        let _ = try MCPProtocol.parseInitializeResponse(initResp)
-        send(MCPProtocol.initializedNotification())
+        do {
+            // Initialize handshake
+            let initResp = try sendAndReceive(
+                MCPProtocol.initializeRequest(id: allocId()),
+                timeoutMilliseconds: Self.startupTimeoutMilliseconds,
+                operationDescription: "initialize"
+            )
+            let _ = try MCPProtocol.parseInitializeResponse(initResp)
+            send(MCPProtocol.initializedNotification())
 
-        // Discover tools
-        let toolsResp = try sendAndReceive(MCPProtocol.toolsListRequest(id: allocId()))
-        self.tools = try MCPProtocol.parseToolsListResponse(toolsResp)
+            // Discover tools
+            let toolsResp = try sendAndReceive(
+                MCPProtocol.toolsListRequest(id: allocId()),
+                timeoutMilliseconds: Self.startupTimeoutMilliseconds,
+                operationDescription: "tools/list"
+            )
+            self.tools = try MCPProtocol.parseToolsListResponse(toolsResp)
+        } catch {
+            if proc.isRunning {
+                proc.terminate()
+            }
+            throw error
+        }
     }
 
     func callTool(name: String, arguments: String) throws -> String {
-        let resp = try sendAndReceive(MCPProtocol.toolsCallRequest(id: allocId(), name: name, arguments: arguments))
+        let resp: String
+        do {
+            resp = try sendAndReceive(
+                MCPProtocol.toolsCallRequest(id: allocId(), name: name, arguments: arguments),
+                timeoutMilliseconds: Self.toolCallTimeoutMilliseconds,
+                operationDescription: "tool '\(name)'"
+            )
+        } catch {
+            if case .timedOut = error as? MCPError {
+                shutdown()
+            }
+            throw error
+        }
         let result = try MCPProtocol.parseToolCallResponse(resp)
+        if result.isError {
+            throw MCPError.serverError("Tool '\(name)' failed: \(result.text)")
+        }
         return result.text
     }
 
@@ -80,20 +114,59 @@ final class MCPConnection: @unchecked Sendable {
     }
 
     private func send(_ message: String) {
-        let data = (message + "\n").data(using: .utf8)!
+        guard let data = (message + "\n").data(using: .utf8) else { return }
         stdinPipe.fileHandleForWriting.write(data)
     }
 
-    private func sendAndReceive(_ message: String) throws -> String {
+    private func sendAndReceive(
+        _ message: String,
+        timeoutMilliseconds: Int,
+        operationDescription: String
+    ) throws -> String {
         send(message)
-        // Read one line from stdout
-        let handle = stdoutPipe.fileHandleForReading
         var buffer = Data()
+        let fd = stdoutPipe.fileHandleForReading.fileDescriptor
+        let deadline = Date().timeIntervalSinceReferenceDate + (Double(timeoutMilliseconds) / 1000.0)
+
         while true {
-            let byte = handle.readData(ofLength: 1)
-            if byte.isEmpty { throw MCPError.processError("MCP server closed unexpectedly") }
-            if byte[0] == UInt8(ascii: "\n") { break }
-            buffer.append(byte)
+            let remainingMilliseconds = Int((deadline - Date().timeIntervalSinceReferenceDate) * 1000.0)
+            if remainingMilliseconds <= 0 {
+                throw MCPError.timedOut("\(operationDescription.capitalized) timed out after \(timeoutMilliseconds / 1000)s")
+            }
+
+            var pollDescriptor = pollfd(fd: Int32(fd), events: Int16(POLLIN), revents: 0)
+            let ready = poll(&pollDescriptor, 1, Int32(remainingMilliseconds))
+            if ready == 0 {
+                throw MCPError.timedOut("\(operationDescription.capitalized) timed out after \(timeoutMilliseconds / 1000)s")
+            }
+            if ready < 0 {
+                if errno == EINTR { continue }
+                throw MCPError.processError("Failed waiting for MCP response: \(String(cString: strerror(errno)))")
+            }
+            if (pollDescriptor.revents & Int16(POLLNVAL)) != 0 {
+                throw MCPError.processError("MCP stdout became invalid")
+            }
+            if (pollDescriptor.revents & Int16(POLLERR)) != 0 {
+                throw MCPError.processError("MCP stdout reported an I/O error")
+            }
+            if (pollDescriptor.revents & Int16(POLLHUP)) != 0 && (pollDescriptor.revents & Int16(POLLIN)) == 0 {
+                throw MCPError.processError("MCP server closed unexpectedly")
+            }
+            if (pollDescriptor.revents & Int16(POLLIN)) == 0 {
+                continue
+            }
+
+            var byte: UInt8 = 0
+            let readCount = Darwin.read(fd, &byte, 1)
+            if readCount == 0 {
+                throw MCPError.processError("MCP server closed unexpectedly")
+            }
+            if readCount < 0 {
+                if errno == EINTR { continue }
+                throw MCPError.processError("Failed reading MCP response: \(String(cString: strerror(errno)))")
+            }
+            if byte == UInt8(ascii: "\n") { break }
+            buffer.append(&byte, count: 1)
         }
         guard let line = String(data: buffer, encoding: .utf8), !line.isEmpty else {
             throw MCPError.processError("Empty response from MCP server")

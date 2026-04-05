@@ -31,6 +31,7 @@ func exitCode(for error: ApfelError) -> Int32 {
     case .rateLimited:         return exitRateLimited
     case .concurrentRequest:   return exitRateLimited
     case .unsupportedLanguage: return exitRuntimeError
+    case .toolExecution:       return exitRuntimeError
     case .unknown:             return exitRuntimeError
     }
 }

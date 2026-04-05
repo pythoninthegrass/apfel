@@ -6,12 +6,16 @@ public enum ApfelError: Error, Equatable, Sendable {
     case rateLimited
     case concurrentRequest
     case unsupportedLanguage(String)
+    case toolExecution(String)
     case unknown(String)
 
     /// Classify any thrown error into a typed ApfelError.
     /// Matches on FoundationModels.GenerationError first, falls back to string matching.
     public static func classify(_ error: Error) -> ApfelError {
         if let already = error as? ApfelError { return already }
+        if let mcpError = error as? MCPError {
+            return .toolExecution(mcpError.description)
+        }
 
         // Try typed match first (FoundationModels errors)
         let typeName = String(describing: type(of: error))
@@ -61,6 +65,7 @@ public enum ApfelError: Error, Equatable, Sendable {
         case .rateLimited:         return "[rate limited]"
         case .concurrentRequest:   return "[busy]"
         case .unsupportedLanguage: return "[unsupported language]"
+        case .toolExecution:       return "[tool error]"
         case .unknown:             return "[error]"
         }
     }
@@ -72,6 +77,7 @@ public enum ApfelError: Error, Equatable, Sendable {
         case .rateLimited:         return "rate_limit_error"
         case .concurrentRequest:   return "rate_limit_error"
         case .unsupportedLanguage: return "invalid_request_error"
+        case .toolExecution:       return "server_error"
         case .unknown:             return "server_error"
         }
     }
@@ -84,6 +90,7 @@ public enum ApfelError: Error, Equatable, Sendable {
         case .rateLimited:         return 429
         case .concurrentRequest:   return 429
         case .unsupportedLanguage: return 400
+        case .toolExecution:       return 500
         case .unknown:             return 500
         }
     }
@@ -100,6 +107,8 @@ public enum ApfelError: Error, Equatable, Sendable {
             return "Apple Intelligence is busy with another request. Retry shortly."
         case .unsupportedLanguage(let msg):
             return "Unsupported language: \(msg)"
+        case .toolExecution(let msg):
+            return msg
         case .unknown(let msg):
             return msg
         }

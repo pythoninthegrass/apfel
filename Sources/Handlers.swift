@@ -135,6 +135,7 @@ func handleChatCompletion(_ request: Request, context: some RequestContext) asyn
         let userPrompt = chatRequest.messages.last(where: { $0.role == "user" })?.textContent ?? finalPrompt
         let result = try await mcpAutoExecuteResponse(
             session: session, prompt: finalPrompt, userPrompt: userPrompt,
+            originalMessages: chatRequest.messages, sessionOptions: sessionOpts,
             id: requestId, created: created, genOpts: genOpts,
             promptTokens: promptTokens, streaming: isStreaming,
             requestBody: requestBodyString, events: events
@@ -165,6 +166,8 @@ private func mcpAutoExecuteResponse(
     session: LanguageModelSession,
     prompt: String,
     userPrompt: String,
+    originalMessages: [OpenAIMessage],
+    sessionOptions: SessionOptions,
     id: String,
     created: Int,
     genOpts: GenerationOptions,
@@ -196,17 +199,35 @@ private func mcpAutoExecuteResponse(
 
     // Auto-execute MCP tool calls and re-prompt for plain text answer
     let content: String
-    if let executed = try await executeMCPToolCalls(
-        in: rawContent, mcpManager: serverState.mcpManager,
-        userPrompt: userPrompt, options: genOpts
-    ) {
-        for log in executed.toolLog {
-            events.append("mcp tool: \(log.name)(\(log.args)) = \(log.isError ? "error: " : "")\(log.result)")
+    do {
+        if let executed = try await executeMCPToolCalls(
+            in: rawContent,
+            mcpManager: serverState.mcpManager,
+            userPrompt: userPrompt,
+            messages: originalMessages,
+            sessionOptions: sessionOptions,
+            options: genOpts
+        ) {
+            for log in executed.toolLog {
+                events.append("mcp tool: \(log.name)(\(log.args)) = \(log.isError ? "error: " : "")\(log.result)")
+            }
+            content = executed.content
+            events.append("mcp: auto-executed, final response chars=\(content.count)")
+        } else {
+            content = rawContent
         }
-        content = executed.content
-        events.append("mcp: auto-executed, final response chars=\(content.count)")
-    } else {
-        content = rawContent
+    } catch {
+        let classified = ApfelError.classify(error)
+        let msg = classified.openAIMessage
+        return chatFailure(
+            status: .init(code: classified.httpStatusCode),
+            message: msg,
+            type: classified.openAIType,
+            stream: streaming,
+            requestBody: requestBody,
+            events: events,
+            event: "mcp execution failed: \(msg)"
+        )
     }
 
     let completionTokens = await TokenCounter.shared.count(content)
@@ -428,11 +449,19 @@ private func streamingResponse(
                         ToolCall(id: $0.id, type: "function",
                                  function: ToolCallFunction(name: $0.name, arguments: $0.argumentsString))
                     }
+                    let chunkToolCalls = openAIToolCalls.enumerated().map { index, call in
+                        ChatCompletionChunk.ToolCallDelta(
+                            index: index,
+                            id: call.id,
+                            type: call.type,
+                            function: call.function
+                        )
+                    }
                     let toolChunk = ChatCompletionChunk(
                         id: id, object: "chat.completion.chunk", created: created, model: modelName,
                         choices: [.init(
                             index: 0,
-                            delta: .init(role: nil, content: nil, tool_calls: openAIToolCalls),
+                            delta: .init(role: nil, content: nil, tool_calls: chunkToolCalls),
                             finish_reason: "tool_calls"
                         )],
                         usage: nil

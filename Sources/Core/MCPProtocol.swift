@@ -116,8 +116,13 @@ public enum MCPProtocol {
         var msg: [String: Any] = ["jsonrpc": "2.0", "method": method]
         if let id { msg["id"] = id }
         if let params { msg["params"] = params }
-        let data = try! JSONSerialization.data(withJSONObject: msg, options: [.sortedKeys])
-        return String(data: data, encoding: .utf8)!
+        guard JSONSerialization.isValidJSONObject(msg),
+              let data = try? JSONSerialization.data(withJSONObject: msg, options: [.sortedKeys]),
+              let string = String(data: data, encoding: .utf8) else {
+            let idFragment = id.map { #","id":\#($0)"# } ?? ""
+            return #"{"jsonrpc":"2.0"\#(idFragment),"method":"\#(method)"}"#
+        }
+        return string
     }
 
     private static func parseJSON(_ json: String) throws -> [String: Any] {
@@ -129,9 +134,29 @@ public enum MCPProtocol {
     }
 }
 
-public enum MCPError: Error, Sendable {
+public enum MCPError: Error, Sendable, Equatable {
     case invalidResponse(String)
     case serverError(String)
     case toolNotFound(String)
     case processError(String)
+    case timedOut(String)
+}
+
+extension MCPError: LocalizedError, CustomStringConvertible {
+    public var errorDescription: String? { description }
+
+    public var description: String {
+        switch self {
+        case .invalidResponse(let message):
+            return message
+        case .serverError(let message):
+            return message
+        case .toolNotFound(let message):
+            return message
+        case .processError(let message):
+            return message
+        case .timedOut(let message):
+            return message
+        }
+    }
 }

@@ -64,7 +64,13 @@ struct ChatCompletionChunk: Encodable, Sendable {
     struct Delta: Encodable, Sendable {
         let role: String?
         let content: String?
-        let tool_calls: [ToolCall]?
+        let tool_calls: [ToolCallDelta]?
+    }
+    struct ToolCallDelta: Encodable, Sendable {
+        let index: Int
+        let id: String?
+        let type: String?
+        let function: ToolCallFunction?
     }
     struct ChunkUsage: Encodable, Sendable {
         let prompt_tokens: Int

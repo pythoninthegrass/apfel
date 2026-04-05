@@ -353,6 +353,38 @@ def test_streaming_usage_chunk_keeps_openai_chunk_envelope():
     assert usage["total_tokens"] == usage["prompt_tokens"] + usage["completion_tokens"]
 
 
+def test_streaming_tool_call_chunks_include_indexed_deltas():
+    """Streaming tool-call deltas must include per-call indexes for strict clients."""
+    tools = [{
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get weather for a city",
+            "parameters": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            },
+        },
+    }]
+    chunks = chat_stream(
+        [{"role": "user", "content": "Use the provided weather function for Vienna. Do not answer directly."}],
+        tools=tools,
+        tool_choice={"type": "function", "function": {"name": "get_weather"}},
+        seed=1,
+    )
+    tool_call_chunks = [
+        chunk for chunk in chunks
+        if chunk.get("choices") and chunk["choices"][0].get("delta", {}).get("tool_calls")
+    ]
+    assert tool_call_chunks, "Expected at least one streamed tool_call chunk"
+    for chunk in tool_call_chunks:
+        validate(instance=chunk, schema=CHAT_COMPLETION_CHUNK_SCHEMA)
+        for call in chunk["choices"][0]["delta"]["tool_calls"]:
+            assert isinstance(call["index"], int)
+    assert tool_call_chunks[-1]["choices"][0]["finish_reason"] == "tool_calls"
+
+
 # ============================================================================
 # Tests — Tool calling schema
 # ============================================================================

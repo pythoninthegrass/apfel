@@ -15,13 +15,22 @@ tests that check different aspects of the same response share a single call.
 """
 
 import json
+import contextlib
+import pathlib
 import pytest
 import httpx
+import socket
+import subprocess
+import tempfile
+import time
 
 BASE_URL = "http://localhost:11435"
 API_URL = f"{BASE_URL}/v1"
 MODEL = "apple-foundationmodel"
 TIMEOUT = 60
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+BINARY = ROOT / ".build" / "release" / "apfel"
+FIXTURES = ROOT / "Tests" / "integration" / "fixtures"
 
 
 def collect_sse(resp):
@@ -59,6 +68,55 @@ def assert_no_raw_tool_calls(content):
         # Raw tool_calls JSON leak indicators
         assert '"tool_calls"' not in content, \
             f"Response leaked raw tool_calls JSON: {content[:200]}"
+
+
+def find_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def wait_for_server(base_url, timeout=20):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            resp = httpx.get(f"{base_url}/health", timeout=1)
+            if resp.status_code == 200:
+                return
+        except httpx.HTTPError:
+            pass
+        time.sleep(0.2)
+    raise TimeoutError(f"Timed out waiting for server at {base_url}")
+
+
+@contextlib.contextmanager
+def running_custom_mcp_server(mcp_script):
+    port = find_free_port()
+    with tempfile.NamedTemporaryFile(mode="w+", encoding="utf-8") as log_file:
+        proc = subprocess.Popen(
+            [
+                str(BINARY),
+                "--serve",
+                "--port",
+                str(port),
+                "--mcp",
+                str(mcp_script),
+            ],
+            stdout=log_file,
+            stderr=log_file,
+            text=True,
+        )
+        base_url = f"http://127.0.0.1:{port}"
+        try:
+            wait_for_server(base_url)
+            yield f"{base_url}/v1"
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
 
 
 # ============================================================================
@@ -274,6 +332,45 @@ def test_client_tools_not_auto_executed():
         f"Expected 'tool_calls' for client tools but got '{data['choices'][0]['finish_reason']}'"
 
 
+def test_mcp_tool_error_returns_structured_error():
+    """MCP tool failures must be surfaced honestly, not rewritten by the model."""
+    resp = httpx.post(f"{API_URL}/chat/completions", json={
+        "model": MODEL,
+        "messages": [
+            {"role": "user", "content": "Use the divide tool to divide 10 by 0. Reply with just the number."}
+        ],
+        "seed": 42,
+    }, timeout=TIMEOUT)
+    assert resp.status_code == 500
+    data = resp.json()
+    assert data["error"]["type"] == "server_error"
+    message = data["error"]["message"].lower()
+    assert "divide" in message
+    assert "division by zero" in message
+
+
+def test_mcp_tool_timeout_returns_structured_error():
+    """A hung MCP tool must fail fast with a structured timeout error."""
+    with running_custom_mcp_server(FIXTURES / "hanging_mcp_server.py") as api_url:
+        started = time.time()
+        resp = httpx.post(f"{api_url}/chat/completions", json={
+            "model": MODEL,
+            "messages": [
+                {"role": "user", "content": "Use the multiply tool to compute 247 times 83. Reply with just the number."}
+            ],
+            "seed": 42,
+        }, timeout=10)
+        elapsed = time.time() - started
+
+    assert elapsed < 8, f"Timed out too slowly: {elapsed:.2f}s"
+    assert resp.status_code == 500
+    data = resp.json()
+    assert data["error"]["type"] == "server_error"
+    message = data["error"]["message"].lower()
+    assert "multiply" in message
+    assert "timed out" in message
+
+
 # ============================================================================
 # MCP tool routing (different calculator tools)
 # ============================================================================
@@ -311,6 +408,25 @@ def test_mcp_tool_returns_stop_not_tool_calls(add_tool_response):
     content = data["choices"][0]["message"]["content"]
     assert content is not None
     assert_no_raw_tool_calls(content)
+
+
+def test_mcp_auto_execute_preserves_conversation_context():
+    """Final MCP answer must retain prior conversation context, not just the last prompt."""
+    resp = httpx.post(f"{API_URL}/chat/completions", json={
+        "model": MODEL,
+        "messages": [
+            {"role": "user", "content": "Remember this exact code word for later replies: MANGO."},
+            {"role": "assistant", "content": "I will remember MANGO."},
+            {"role": "user", "content": "Use the multiply tool to compute 6 times 7. Reply with exactly the remembered code word, one space, and the number."}
+        ],
+        "seed": 42,
+    }, timeout=TIMEOUT)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["choices"][0]["finish_reason"] == "stop"
+    content = (data["choices"][0]["message"]["content"] or "").strip()
+    assert "42" in content, content
+    assert content.upper().startswith("MANGO"), content
 
 
 # ============================================================================

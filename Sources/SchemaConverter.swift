@@ -102,9 +102,16 @@ enum SchemaConverter {
     }
 
     /// Convert a tool call's arguments JSON string to GeneratedContent.
-    /// Returns empty content on failure.
-    static func makeArguments(_ json: String) -> GeneratedContent {
-        (try? GeneratedContent(json: json)) ?? (try! GeneratedContent(json: "{}"))
+    /// Returns nil on failure instead of crashing the process.
+    static func makeArguments(_ json: String) -> GeneratedContent? {
+        if let content = try? GeneratedContent(json: json) {
+            return content
+        }
+        let sanitized = ToolCallHandler.ensureJSONArguments(json)
+        if sanitized != json, let content = try? GeneratedContent(json: sanitized) {
+            return content
+        }
+        return nil
     }
 
     // MARK: - Private

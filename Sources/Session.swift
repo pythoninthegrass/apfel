@@ -225,6 +225,8 @@ func executeMCPToolCalls(
     mcpManager: MCPManager?,
     userPrompt: String,
     systemPrompt: String? = nil,
+    messages: [OpenAIMessage]? = nil,
+    sessionOptions: SessionOptions? = nil,
     options: GenerationOptions
 ) async throws -> (content: String, toolLog: [(name: String, args: String, result: String, isError: Bool)])? {
     guard let mcpManager,
@@ -240,19 +242,71 @@ func executeMCPToolCalls(
             resultParts.append("\(call.name): \(result)")
             toolLog.append((name: call.name, args: call.argumentsString, result: result, isError: false))
         } catch {
-            resultParts.append("\(call.name): error - \(error)")
-            toolLog.append((name: call.name, args: call.argumentsString, result: "\(error)", isError: true))
+            if case .toolNotFound = error as? MCPError {
+                // Model hallucinated a tool name that no MCP server provides.
+                // Include the error as a result so the model can still respond.
+                let msg = "\(error)"
+                resultParts.append("\(call.name): error - \(msg)")
+                toolLog.append((name: call.name, args: call.argumentsString, result: msg, isError: true))
+            } else {
+                throw error  // Timeouts, server errors, process errors are fatal.
+            }
         }
     }
 
-    // Re-prompt WITHOUT tools so model gives a plain text answer
-    let plainSession = makeSession(systemPrompt: systemPrompt)
-    let toolResult = resultParts.joined(separator: "\n")
-    let finalResponse = try await plainSession.respond(
-        to: "The user asked: \(userPrompt)\n\nThe tool returned: \(toolResult)\n\nAnswer the user's question using this result.",
-        options: options
-    )
-    return (content: finalResponse.content, toolLog: toolLog)
+    let finalContent: String
+    if let messages, let sessionOptions {
+        let followUpMessages = appendExecutedToolResults(
+            to: messages,
+            toolCalls: toolCalls,
+            toolResults: toolLog.map { ($0.name, $0.result) }
+        )
+        let (followUpSession, followUpPrompt) = try await ContextManager.makeSession(
+            messages: followUpMessages,
+            tools: nil,
+            options: sessionOptions,
+            jsonMode: false,
+            toolChoice: nil
+        )
+        finalContent = try await followUpSession.respond(to: followUpPrompt, options: options).content
+    } else {
+        // CLI fallback: no prior transcript, so use a plain follow-up prompt.
+        let plainSession = makeSession(systemPrompt: systemPrompt)
+        let toolResult = resultParts.joined(separator: "\n")
+        finalContent = try await plainSession.respond(
+            to: "The user asked: \(userPrompt)\n\nThe tool returned: \(toolResult)\n\nAnswer the user's question using this result.",
+            options: options
+        ).content
+    }
+    return (content: finalContent, toolLog: toolLog)
+}
+
+private func appendExecutedToolResults(
+    to messages: [OpenAIMessage],
+    toolCalls: [ParsedToolCall],
+    toolResults: [(name: String, result: String)]
+) -> [OpenAIMessage] {
+    let assistantToolCalls = toolCalls.map { call in
+        ToolCall(
+            id: call.id,
+            type: "function",
+            function: ToolCallFunction(name: call.name, arguments: call.argumentsString)
+        )
+    }
+
+    var followUpMessages = messages
+    followUpMessages.append(OpenAIMessage(role: "assistant", content: nil, tool_calls: assistantToolCalls))
+    for (call, result) in zip(toolCalls, toolResults) {
+        followUpMessages.append(
+            OpenAIMessage(
+                role: "tool",
+                content: .text(result.result),
+                tool_call_id: call.id,
+                name: result.name
+            )
+        )
+    }
+    return followUpMessages
 }
 
 // MARK: - Streaming Helper

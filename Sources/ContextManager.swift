@@ -162,13 +162,17 @@ enum ContextManager {
 
         case "assistant":
             if let calls = message.tool_calls, !calls.isEmpty {
-                let transcriptCalls = calls.map { call in
-                    Transcript.ToolCall(
+                let transcriptCalls = calls.compactMap { call -> Transcript.ToolCall? in
+                    guard let arguments = SchemaConverter.makeArguments(call.function.arguments) else {
+                        return nil
+                    }
+                    return Transcript.ToolCall(
                         id: call.id,
                         toolName: call.function.name,
-                        arguments: SchemaConverter.makeArguments(call.function.arguments)
+                        arguments: arguments
                     )
                 }
+                guard !transcriptCalls.isEmpty else { return nil }
                 return .toolCalls(Transcript.ToolCalls(transcriptCalls))
             }
 
