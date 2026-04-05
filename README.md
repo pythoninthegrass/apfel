@@ -368,51 +368,127 @@ META
   --update                                Check for updates via Homebrew
 ```
 
-**General options** (all modes):
+**Examples by flag:**
 
-| Flag | Description |
-|------|-------------|
-| `-f, --file <path>` | Attach file content to prompt (repeatable) |
-| `-s, --system <text>` | System prompt |
-| `--system-file <path>` | Read system prompt from file |
-| `-o, --output <fmt>` | Output format: `plain` or `json` |
-| `-q, --quiet` | Suppress non-essential output |
-| `--no-color` | Disable ANSI colors |
-| `--temperature <n>` | Sampling temperature |
-| `--seed <n>` | Random seed for reproducibility |
-| `--max-tokens <n>` | Maximum response tokens |
-| `--mcp <path>` | Attach MCP tool server (repeatable). See [MCP docs](docs/mcp-calculator.md) |
-| `--permissive` | Use permissive content guardrails |
-| `--benchmark` | Run internal performance benchmarks |
-| `--model-info` | Print model capabilities and exit |
-| `--update` | Check for updates and upgrade via Homebrew |
-| `--release` | Show detailed version, build, and capability info |
-| `-v, --version` | Print version |
-| `-h, --help` | Show help |
+```bash
+# -f, --file — attach file content to prompt (repeatable)
+apfel -f main.swift "Explain this code"
+apfel -f before.txt -f after.txt "What changed?"
 
-**Context options** (`--chat`):
+# -s, --system — set a system prompt
+apfel -s "You are a pirate" "What is recursion?"
+apfel -s "Reply in JSON only" "List 3 colors"
 
-| Flag | Description |
-|------|-------------|
-| `--context-strategy <s>` | `newest-first` (default), `oldest-first`, `sliding-window`, `summarize`, `strict` |
-| `--context-max-turns <n>` | Max history turns (`sliding-window` only) |
-| `--context-output-reserve <n>` | Tokens reserved for output (default: 512) |
+# --system-file — read system prompt from a file
+apfel --system-file persona.txt "Introduce yourself"
 
-**Server options** (`--serve`):
+# --mcp — attach MCP tool servers (repeatable)
+apfel --mcp ./mcp/calculator/server.py "What is 15 times 27?"
+apfel --mcp ./calc.py --mcp ./weather.py "Use both tools"
 
-| Flag | Description |
-|------|-------------|
-| `--port <n>` | Server port (default: 11434) |
-| `--host <addr>` | Bind address (default: 127.0.0.1) |
-| `--cors` | Enable CORS headers for browser clients |
-| `--allowed-origins <origins>` | Add comma-separated allowed origins to the localhost defaults |
-| `--no-origin-check` | Disable origin checking (allow all origins) |
-| `--token <secret>` | Require Bearer token authentication |
-| `--token-auto` | Generate and print a random Bearer token |
-| `--public-health` | Keep `/health` unauthenticated on non-loopback token-protected binds |
-| `--footgun` | Disable all protections (`--no-origin-check` + `--cors`) |
-| `--max-concurrent <n>` | Max concurrent requests (default: 5) |
-| `--debug` | Verbose logging and enable `/v1/logs` inspector endpoints |
+# -o, --output — output format: plain (default) or json
+apfel -o json "Translate to German: hello" | jq .content
+apfel -o json "List 3 facts" | jq -r .content
+
+# -q, --quiet — suppress headers and chrome, output only
+apfel -q "Give me a UUID"
+apfel -q -o json "Summarize" | jq .content
+
+# --no-color — disable ANSI color codes
+apfel --no-color --help
+NO_COLOR=1 apfel "Hello"
+
+# --temperature — sampling temperature (higher = more creative)
+apfel --temperature 0.0 "What is 2+2?"
+apfel --temperature 1.5 "Write a wild poem"
+
+# --seed — random seed for reproducible output
+apfel --seed 42 "Tell me a joke"
+apfel --seed 42 "Tell me a joke"   # same output
+
+# --max-tokens — limit response length
+apfel --max-tokens 50 "Explain quantum computing"
+apfel --max-tokens 10 "Say something short"
+
+# --permissive — relax content guardrails
+apfel --permissive "Write a villain monologue"
+
+# --stream — stream response tokens as they arrive
+apfel --stream "Write a haiku about code"
+apfel --stream -s "Be verbose" "Explain TCP"
+
+# --chat — interactive multi-turn conversation
+apfel --chat
+apfel --chat -s "You are a helpful coding assistant"
+
+# --context-strategy — how to handle context overflow in chat
+apfel --chat --context-strategy newest-first      # default: keep recent turns
+apfel --chat --context-strategy oldest-first      # keep earliest turns
+apfel --chat --context-strategy sliding-window --context-max-turns 6
+apfel --chat --context-strategy summarize          # compress old turns
+apfel --chat --context-strategy strict             # error on overflow
+
+# --context-max-turns — max turns to keep (sliding-window only)
+apfel --chat --context-strategy sliding-window --context-max-turns 4
+
+# --context-output-reserve — tokens reserved for model response
+apfel --chat --context-output-reserve 256
+
+# --serve — start OpenAI-compatible HTTP server
+apfel --serve
+apfel --serve --port 3000 --host 0.0.0.0
+
+# --port, --host — server bind address
+apfel --serve --port 8080
+apfel --serve --host 0.0.0.0 --port 443
+
+# --cors — enable CORS for browser clients
+apfel --serve --cors
+
+# --allowed-origins — restrict to specific origins
+apfel --serve --allowed-origins "https://myapp.com,https://staging.myapp.com"
+
+# --no-origin-check — allow requests from any origin
+apfel --serve --no-origin-check
+
+# --token — require Bearer token authentication
+apfel --serve --token "my-secret-token"
+curl localhost:11434/v1/models -H "Authorization: Bearer my-secret-token"
+
+# --token-auto — generate a random token and print it
+apfel --serve --token-auto
+
+# --public-health — keep /health open even with token auth
+apfel --serve --token "secret" --host 0.0.0.0 --public-health
+
+# --footgun — disable all protections (CORS + no origin check)
+apfel --serve --footgun   # only for local development!
+
+# --max-concurrent — limit parallel model requests
+apfel --serve --max-concurrent 2
+
+# --debug — verbose logging with /v1/logs endpoints
+apfel --serve --debug
+
+# --benchmark — run internal performance benchmarks
+apfel --benchmark
+apfel --benchmark -o json | jq '.benchmarks[] | {name, speedup_ratio}'
+
+# --model-info — print model capabilities
+apfel --model-info
+
+# --update — check for updates and upgrade via Homebrew
+apfel --update
+
+# --release — detailed version and build info
+apfel --release
+
+# --version
+apfel --version
+
+# --help
+apfel --help
+```
 
 See [Server Security](docs/server-security.md) for detailed documentation on security options.
 

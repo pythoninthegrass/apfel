@@ -19,6 +19,7 @@ import select
 import signal
 import subprocess
 import time
+import warnings
 
 import pytest
 
@@ -118,7 +119,13 @@ def run_cli_chat_json(args, steps, env=None, timeout=60, stop_when=None):
         merged_env.update(env)
 
     stdout_read_fd, stdout_write_fd = os.pipe()
-    pid, master_fd = pty.fork()
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="This process .* use of forkpty\\(\\) may lead to deadlocks in the child\\.",
+            category=DeprecationWarning,
+        )
+        pid, master_fd = pty.fork()
     if pid == 0:
         os.close(stdout_read_fd)
         os.dup2(stdout_write_fd, 1)
@@ -191,8 +198,89 @@ def run_cli_chat_json(args, steps, env=None, timeout=60, stop_when=None):
     )
 
 
+def run_cli_chat_tty(args, steps, env=None, timeout=60, stop_when=None):
+    merged_env = os.environ.copy()
+    for key in [
+        "NO_COLOR",
+        "APFEL_SYSTEM_PROMPT",
+        "APFEL_HOST",
+        "APFEL_PORT",
+        "APFEL_TEMPERATURE",
+        "APFEL_MAX_TOKENS",
+    ]:
+        merged_env.pop(key, None)
+    if env:
+        merged_env.update(env)
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="This process .* use of forkpty\\(\\) may lead to deadlocks in the child\\.",
+            category=DeprecationWarning,
+        )
+        pid, master_fd = pty.fork()
+    if pid == 0:
+        os.execve(str(BINARY), [str(BINARY), *args], merged_env)
+
+    output = bytearray()
+    deadline = time.time() + timeout
+    pending_steps = list(steps)
+    exit_status = None
+
+    try:
+        while True:
+            if time.time() > deadline:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+                raise TimeoutError(f"Timed out waiting for {' '.join(args)}")
+
+            if pending_steps:
+                step = pending_steps[0]
+                if len(step) == 2:
+                    wait_for, data = step
+                    delay = 0
+                else:
+                    wait_for, data, delay = step
+                if wait_for is None or wait_for in output:
+                    if delay:
+                        time.sleep(delay)
+                    os.write(master_fd, data)
+                    pending_steps.pop(0)
+                    continue
+
+            ready, _, _ = select.select([master_fd], [], [], 0.1)
+            if master_fd in ready:
+                try:
+                    chunk = os.read(master_fd, 4096)
+                except OSError:
+                    chunk = b""
+                if chunk:
+                    output.extend(chunk)
+
+            if stop_when is not None and stop_when(output):
+                os.kill(pid, signal.SIGKILL)
+                _, exit_status = os.waitpid(pid, 0)
+                break
+
+            waited_pid, status = os.waitpid(pid, os.WNOHANG)
+            if waited_pid == pid and master_fd not in ready:
+                exit_status = status
+                break
+    finally:
+        os.close(master_fd)
+
+    if exit_status is None:
+        _, exit_status = os.waitpid(pid, 0)
+
+    return os.waitstatus_to_exitcode(exit_status), output.decode("utf-8", errors="replace")
+
+
 def parse_json_lines(text):
     return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
+def parse_json_lines_from_output(text):
+    return [json.loads(line) for line in text.splitlines() if line.lstrip().startswith("{")]
 
 
 @functools.lru_cache(maxsize=1)
@@ -291,38 +379,56 @@ def test_stream_returns_content():
 
 def test_chat_json_left_arrow_edits_input():
     require_model()
-    returncode, stdout, tty = run_cli_chat_json(
+    returncode, output = run_cli_chat_tty(
         ["--chat", "-o", "json", "--max-tokens", "1"],
         steps=[
-            (b"Type 'quit' to exit.", b"helo\x1b[D\x1b[Dl\n", 0.2),
+            (b"you\xe2\x80\xba ", b"helo\x1b[D\x1b[Dl\n", 0.2),
         ],
-        stop_when=lambda stdout, _tty: stdout.count(b'"role":"user"') >= 1,
+        stop_when=lambda output: output.count(b'"role":"user"') >= 1,
     )
     assert returncode != 0
-    messages = parse_json_lines(stdout)
+    messages = parse_json_lines_from_output(output)
     user_messages = [message for message in messages if message["role"] == "user"]
     assert user_messages[0]["content"] == "hello"
-    assert "^[[D" not in stdout
-    assert "\x1b[D" not in stdout
+    assert "^[[D" not in output
+    assert "\x1b[D" not in output
 
 
 def test_chat_json_up_arrow_replays_previous_prompt():
     require_model()
     first_prompt = "Reply ALPHA."
-    returncode, stdout, tty = run_cli_chat_json(
+    returncode, output = run_cli_chat_tty(
         ["--chat", "-o", "json", "--max-tokens", "1"],
         steps=[
-            (b"Type 'quit' to exit.", f"{first_prompt}\n\x1b[A\n".encode("utf-8"), 0.2),
+            (b"you\xe2\x80\xba ", f"{first_prompt}\n\x1b[A\n".encode("utf-8"), 0.2),
         ],
-        stop_when=lambda stdout, _tty: stdout.count(b'"role":"user"') >= 2,
+        stop_when=lambda output: output.count(b'"role":"user"') >= 2,
     )
     assert returncode != 0
-    messages = parse_json_lines(stdout)
+    messages = parse_json_lines_from_output(output)
     user_messages = [message for message in messages if message["role"] == "user"]
     assert [message["content"] for message in user_messages[:2]] == [
         first_prompt,
         first_prompt,
     ]
+
+
+def test_chat_json_keeps_prompt_chrome_off_stdout():
+    require_model()
+    returncode, stdout, tty = run_cli_chat_json(
+        ["--chat", "-o", "json", "--max-tokens", "1"],
+        steps=[
+            (b"Type 'quit' to exit.", b"Hello\n", 0.2),
+        ],
+        stop_when=lambda stdout, _tty: stdout.count(b'"role":"user"') >= 1,
+    )
+    assert returncode != 0
+    messages = parse_json_lines(stdout)
+    assert [message["role"] for message in messages] == ["user"]
+    assert messages[0]["content"] == "Hello"
+    assert "Type 'quit' to exit." not in stdout
+    assert "you› " not in stdout
+    assert "Type 'quit' to exit." in tty
 
 
 def _assert_system_prompt_honored(args):
@@ -499,17 +605,14 @@ def test_update_non_interactive():
 
 
 def test_readme_cli_reference_complete():
-    """Every flag from apfel --help must appear in BOTH the quick-reference code block AND the tables."""
-    # 1. Run --help and extract all long-form flags from OPTIONS, CONTEXT OPTIONS, SERVER OPTIONS
+    """Every flag from --help must appear in BOTH the quick-reference block AND the examples block."""
     result = run_cli(["--help"])
     assert result.returncode == 0, f"--help failed: {result.stderr}"
 
-    help_text = result.stdout
-
-    # Parse flags from the OPTIONS, CONTEXT OPTIONS, and SERVER OPTIONS sections only.
+    # Parse flags from OPTIONS, CONTEXT OPTIONS, and SERVER OPTIONS sections only.
     flag_sections = []
     in_flag_section = False
-    for line in help_text.splitlines():
+    for line in result.stdout.splitlines():
         stripped = line.strip()
         if stripped in ("OPTIONS:", "CONTEXT OPTIONS:", "SERVER OPTIONS:"):
             in_flag_section = True
@@ -523,10 +626,8 @@ def test_readme_cli_reference_complete():
     help_flags = set(re.findall(r"--[a-z][-a-z]+", "\n".join(flag_sections)))
     assert help_flags, "Failed to extract any flags from --help output"
 
-    # 2. Read README.md and split CLI Reference into code block and tables
-    readme_path = ROOT / "README.md"
-    readme_text = readme_path.read_text()
-
+    # Read CLI Reference section from README
+    readme_text = (ROOT / "README.md").read_text()
     cli_ref_match = re.search(
         r"^## CLI Reference\s*\n(.*?)(?=^## |\Z)",
         readme_text,
@@ -535,24 +636,24 @@ def test_readme_cli_reference_complete():
     assert cli_ref_match, "Could not find '## CLI Reference' section in README.md"
     cli_reference = cli_ref_match.group(1)
 
-    # Extract the code block (quick-reference)
-    code_block_match = re.search(r"```\n(.*?)```", cli_reference, re.DOTALL)
-    assert code_block_match, "Could not find code block in CLI Reference section"
-    code_block = code_block_match.group(1)
+    # Split into the two code blocks: quick-reference (first) and examples (second)
+    code_blocks = re.findall(r"```(?:bash)?\n(.*?)```", cli_reference, re.DOTALL)
+    assert len(code_blocks) >= 2, (
+        f"Expected at least 2 code blocks in CLI Reference (quick-ref + examples), found {len(code_blocks)}"
+    )
+    quick_ref = code_blocks[0]
+    examples = code_blocks[1]
 
-    # Everything after the code block is the tables section
-    tables_section = cli_reference[code_block_match.end():]
-
-    # 3. Check that every flag appears in the code block
-    missing_from_block = sorted(flag for flag in help_flags if flag not in code_block)
-    assert not missing_from_block, (
-        f"CLI Reference code block is missing {len(missing_from_block)} flag(s):\n  "
-        + "\n  ".join(missing_from_block)
+    # Every flag must appear in the quick-reference block
+    missing_from_ref = sorted(flag for flag in help_flags if flag not in quick_ref)
+    assert not missing_from_ref, (
+        f"CLI Reference quick-reference block is missing {len(missing_from_ref)} flag(s):\n  "
+        + "\n  ".join(missing_from_ref)
     )
 
-    # 4. Check that every flag appears in the tables
-    missing_from_tables = sorted(flag for flag in help_flags if flag not in tables_section)
-    assert not missing_from_tables, (
-        f"CLI Reference tables are missing {len(missing_from_tables)} flag(s):\n  "
-        + "\n  ".join(missing_from_tables)
+    # Every flag must appear in the examples block
+    missing_from_examples = sorted(flag for flag in help_flags if flag not in examples)
+    assert not missing_from_examples, (
+        f"CLI Reference examples block is missing {len(missing_from_examples)} flag(s):\n  "
+        + "\n  ".join(missing_from_examples)
     )
