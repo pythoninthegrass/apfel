@@ -161,7 +161,10 @@ echo ""
 run creative "Write a haiku about debugging."
 run creative "Write a limerick about a programmer who never tests their code."
 run creative "Write the opening line of a novel set in a world where AI is illegal."
-run creative "Describe the color blue to someone who has never seen it, in exactly two sentences."
+run creative "Describe the color red to someone who has never seen any color. Two sentences max."
+run creative "Describe the color blue to someone who has never seen any color. Two sentences max."
+run creative "Describe the color yellow to someone who has never seen any color. Two sentences max."
+run creative "Describe the color green to someone who has never seen any color. Two sentences max."
 
 # ============================================================================
 echo "## 8. Translation" >&2
