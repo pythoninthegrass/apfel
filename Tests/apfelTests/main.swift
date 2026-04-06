@@ -19,6 +19,33 @@ func test(_ name: String, _ block: () throws -> Void) {
     }
 }
 
+/// Async variant — runs the block on a Task and waits synchronously via semaphore.
+/// Enables unit-testing async functions without XCTest or Swift Testing.
+func testAsync(_ name: String, _ block: @Sendable @escaping () async throws -> Void) {
+    let semaphore = DispatchSemaphore(value: 0)
+    nonisolated(unsafe) var failure: Error? = nil
+    nonisolated(unsafe) var passed = false
+
+    Task {
+        do {
+            try await block()
+            passed = true
+        } catch {
+            failure = error
+        }
+        semaphore.signal()
+    }
+    semaphore.wait()
+
+    if passed {
+        print("  ✅ \(name)")
+        _passed += 1
+    } else {
+        print("  ❌ \(name): \(failure!)")
+        _failed += 1
+    }
+}
+
 func assertEqual<T: Equatable>(_ a: T, _ b: T, _ msg: String = "") throws {
     guard a == b else { throw TestFailure("\(a) != \(b)\(msg.isEmpty ? "" : " — \(msg)")") }
 }
@@ -51,6 +78,7 @@ suite("OpenAIModelsTests") { runOpenAIModelsTests() }
 suite("ChatRequestValidatorTests") { runChatRequestValidatorTests() }
 suite("OriginValidatorTests") { runOriginValidatorTests() }
 suite("MCPClientTests") { runMCPClientTests() }
+suite("AsyncHarnessTests") { runAsyncHarnessTests() }
 
 // MARK: - Summary
 

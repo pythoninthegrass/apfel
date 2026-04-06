@@ -7,3 +7,4 @@ DerivedData/
 .triage-log/
 .wrangler/
 __pycache__/
+.notes/
