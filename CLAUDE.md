@@ -62,7 +62,7 @@ HTTP Server (/v1/*) ───────┘   ContextManager → Transcript API
 ## Current Status
 
 - Version: `1.0.0` (source of truth: `.version`)
-- Tests: 335 unit + 216 integration
+- Tests: 366 unit + 220 integration
 - Distribution: homebrew-core (`brew install apfel`)
 - Stability policy: [STABILITY.md](STABILITY.md)
 - Security policy: [SECURITY.md](SECURITY.md)
@@ -337,21 +337,23 @@ The custom tap (`Arthur-Ficial/homebrew-tap`) is a secondary channel for apfel-f
 
 **What GitHub CI runs (automatic, every push/PR):**
 - Build (release binary)
-- 362 unit tests (pure Swift, no model needed)
+- 366 unit tests (pure Swift, no model needed)
 - 21 model-free integration tests (CLI flags, help, version, file handling)
-- Total: ~383 tests
+- Total: ~387 tests
 
 **What GitHub CI CANNOT run (no Apple Intelligence):**
 - Server response tests (openai_client, openapi_spec, openapi_conformance)
-- MCP tool execution tests (mcp_server)
+- MCP tool execution tests (mcp_server, mcp_remote)
 - Security tests that send real requests (security)
 - Benchmark tests (performance)
 - Chat mode tests (test_chat)
-- Total: ~136 integration tests
+- Brew service tests (test_brew_service)
+- Total: ~199 integration tests
 
 **What runs the full suite (local, before every release):**
 - `make preflight` or `make release` on a Mac with Apple Intelligence
-- 362 unit + 157 integration (7 suites) = 519 tests, 0 skipped
+- 366 unit + 220 integration (10 suites) = 586 tests, 0 skipped
+- Release scripts use directory discovery (`Tests/integration/`), not explicit file lists
 - This is the REAL qualification gate. GitHub CI is a safety net, not the source of truth.
 
 SDK 26.4+ required for FoundationModels token-counting APIs. Release docs: [docs/release.md](docs/release.md)

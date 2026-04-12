@@ -95,27 +95,13 @@ done
 if [ "$READY" -ne 1 ]; then
     fail "servers did not start within 15s"
 else
-    # Run the 6 CI-safe integration suites
-    if python3 -m pytest \
-        Tests/integration/cli_e2e_test.py \
-        Tests/integration/performance_test.py \
-        Tests/integration/openai_client_test.py \
-        Tests/integration/openapi_spec_test.py \
-        Tests/integration/security_test.py \
-        Tests/integration/mcp_server_test.py \
-        -v --tb=short -x 2>&1; then
-        pass "integration tests (6 suites)"
+    # Run ALL integration test files — directory discovery, not explicit lists.
+    # This ensures new test files are never silently excluded.
+    if python3 -m pytest Tests/integration/ -v --tb=short -x 2>&1; then
+        suite_count=$(find Tests/integration -name '*test*.py' ! -name 'conftest.py' | wc -l | tr -d ' ')
+        pass "integration tests ($suite_count suites)"
     else
         fail "integration tests"
-    fi
-
-    # Run OpenAPI conformance (7th suite)
-    if python3 -m pytest \
-        Tests/integration/openapi_conformance_test.py \
-        -v --tb=short -x 2>&1; then
-        pass "OpenAPI conformance tests"
-    else
-        fail "OpenAPI conformance tests"
     fi
 fi
 

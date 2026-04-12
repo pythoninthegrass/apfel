@@ -52,12 +52,27 @@ build: check-toolchain generate-build-info
 install: build
 	@pkill -f "apfel --serve" 2>/dev/null || true
 	@sleep 1
+	@# If Homebrew apfel is linked and would shadow our install, unlink it.
+	@# This only removes the symlink — the Homebrew package stays installed.
+	@# `brew upgrade apfel` or `brew link apfel` restores it.
+	@if command -v brew >/dev/null 2>&1 && brew list apfel >/dev/null 2>&1; then \
+		brew_path=$$(brew --prefix)/bin/$(BINARY); \
+		if [ -L "$$brew_path" ]; then \
+			echo "unlinking Homebrew apfel (dev build takes priority)..."; \
+			brew unlink apfel 2>/dev/null || true; \
+		fi; \
+	fi
 	@if [ -w "$(PREFIX)/bin" ]; then \
 		install .build/release/$(BINARY) $(PREFIX)/bin/$(BINARY); \
 	else \
 		sudo install .build/release/$(BINARY) $(PREFIX)/bin/$(BINARY); \
 	fi
 	@echo "✓ installed: $$($(PREFIX)/bin/$(BINARY) --version)"
+	@resolved=$$(which $(BINARY) 2>/dev/null || echo "not in PATH"); \
+	if [ "$$resolved" != "$(PREFIX)/bin/$(BINARY)" ]; then \
+		echo "⚠ warning: 'which $(BINARY)' resolves to $$resolved, not $(PREFIX)/bin/$(BINARY)"; \
+		echo "  Run: brew unlink apfel   (then make install again)"; \
+	fi
 
 # --- Version bumps ---
 
@@ -143,6 +158,13 @@ uninstall:
 		rm -f $(PREFIX)/bin/$(BINARY); \
 	else \
 		sudo rm -f $(PREFIX)/bin/$(BINARY); \
+	fi
+	@# Restore Homebrew apfel if it was unlinked by make install.
+	@if command -v brew >/dev/null 2>&1 && brew list apfel >/dev/null 2>&1; then \
+		if ! [ -L "$$(brew --prefix)/bin/$(BINARY)" ]; then \
+			echo "restoring Homebrew apfel link..."; \
+			brew link apfel 2>/dev/null || true; \
+		fi; \
 	fi
 
 clean:

@@ -81,15 +81,9 @@ for i in $(seq 1 15); do
 done
 [ "$READY" -eq 1 ] || fail "servers did not start within 15s"
 
-python3 -m pytest \
-    Tests/integration/cli_e2e_test.py \
-    Tests/integration/performance_test.py \
-    Tests/integration/openai_client_test.py \
-    Tests/integration/openapi_spec_test.py \
-    Tests/integration/security_test.py \
-    Tests/integration/mcp_server_test.py \
-    Tests/integration/openapi_conformance_test.py \
-    -v --tb=short
+# Run ALL integration test files — directory discovery, not explicit lists.
+# This ensures new test files are never silently excluded from release qualification.
+python3 -m pytest Tests/integration/ -v --tb=short
 
 # Stop servers
 kill "$SERVER_PID" "$MCP_SERVER_PID" 2>/dev/null || true
