@@ -32,7 +32,20 @@ jobs:
       - name: Unit tests
         run: swift run apfel-tests
 
-      # Integration tests run locally via `make preflight` and `make release`.
-      # GitHub-hosted macos-26 runners are Intel with no Apple Intelligence,
-      # so model-dependent integration tests cannot run here.
-      # CI validates: build + 362 unit tests. Full qualification is local.
+      - name: Install Python test dependencies
+        run: pip3 install --break-system-packages pytest httpx
+
+      - name: Integration tests (model-free subset)
+        run: |
+          # GitHub-hosted macos-26 runners are Intel with no Apple Intelligence.
+          # We run every test that does NOT need the model. Full 7-suite
+          # qualification (157 tests) runs locally via `make preflight`/`make release`.
+
+          # CLI flag/help/version/file tests (no model needed)
+          python3 -m pytest Tests/integration/cli_e2e_test.py \
+            -k "help or version or invalid_flag or no_color or ansi or exit_code or update or release_exits or release_in_help or release_shows_version or mcp_timeout_flag or mcp_timeout_env or file_flag_missing or file_flag_nonexistent or file_flag_image or file_flag_binary or file_flag_unknown" \
+            -v --tb=short
+
+          # Benchmark structure test (no model needed)
+          python3 -m pytest Tests/integration/performance_test.py \
+            -v --tb=short
