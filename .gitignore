@@ -9,3 +9,4 @@ DerivedData/
 __pycache__/
 .notes/
 apfel-*.tar.gz
+.worktrees/
