@@ -4,12 +4,13 @@
 
 ## The Golden Goal
 
-apfel has ONE purpose with THREE delivery modes:
+apfel has ONE purpose with FOUR delivery modes:
 
-> **Expose Apple's on-device FoundationModels LLM as a usable, powerful UNIX tool
-> and an OpenAI API-compatible server, with a working command-line chat.**
+> **Expose Apple's on-device FoundationModels LLM as a usable, powerful UNIX tool,
+> an OpenAI API-compatible server, a working command-line chat, and a reusable
+> Swift library (`ApfelCore`) for downstream developers.**
 
-### The three modes, in priority order:
+### The four modes, in priority order:
 
 1. **UNIX tool** (`apfel "prompt"`, `echo "text" | apfel`, `apfel --stream`)
    - Pipe-friendly, composable, correct exit codes
@@ -28,6 +29,13 @@ apfel has ONE purpose with THREE delivery modes:
    - Interactive multi-turn with context window protection
    - Typed error display, context rotation when approaching limit
    - System prompt support
+
+4. **Swift library** (`import ApfelCore`, first shipped in `1.1.0`)
+   - Pure, FoundationModels-free Swift Package library product
+   - OpenAI-compatible request/response types, validation, tool-call handling, schema parsing, MCP protocol, error classification, retry logic, context-trimming strategies
+   - Downstream apps call FoundationModels themselves - apfel just supplies the types and policies
+   - DocC catalog at `Sources/Core/ApfelCore.docc/`, runnable examples at `Examples/`, stability contract in [STABILITY.md](STABILITY.md)
+   - API-breakage guarded in CI via `swift package diagnose-api-breaking-changes`
 
 The Debug GUI has been extracted to its own repo: [apfel-gui](https://github.com/Arthur-Ficial/apfel-gui)
 

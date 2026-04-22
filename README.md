@@ -15,13 +15,14 @@ Every Mac with Apple Silicon ships a built-in language model as part of Apple In
 
 ## What It Is
 
-Every Apple Silicon Mac with Apple Intelligence includes Apple's on-device foundation model. `apfel` exposes it through [https://developer.apple.com/documentation/foundationmodels](https://developer.apple.com/documentation/foundationmodels) so you can use it directly from the shell and from OpenAI-compatible clients.
+Every Apple Silicon Mac with Apple Intelligence includes Apple's on-device foundation model. `apfel` exposes it through [https://developer.apple.com/documentation/foundationmodels](https://developer.apple.com/documentation/foundationmodels) so you can use it directly from the shell, from OpenAI-compatible clients, and as a Swift library.
 
 | Mode | Command | What you get |
 |------|---------|--------------|
 | UNIX tool | `apfel "prompt"` / `echo "text" \| apfel` | Pipe-friendly answers, file attachments, JSON output, exit codes |
 | OpenAI-compatible server | `apfel --serve` | Drop-in local `http://localhost:11434/v1` backend for OpenAI SDKs |
 | Command-line chat | `apfel --chat` | Multi-turn chat with context-window management |
+| Swift library | `import ApfelCore` | OpenAI types, validation, context strategies, tool calling, MCP - bring your own FoundationModels calls |
 
 Tool calling works across CLI, chat, and server. Inference stays 100% on-device. The context window is 4096 tokens.
 
